@@ -54,6 +54,8 @@ anyhow = "1"
 parking_lot = "0.12"
 crossbeam = "0.8"
 ctrlc = "3.4"
+# Local-time timestamps for the INFO log lines (DD/MM HH:MM:SS.mmm).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [build-dependencies]
 # Cross-platform C/C++ compilation of the vendored suffix array (honors the target triple

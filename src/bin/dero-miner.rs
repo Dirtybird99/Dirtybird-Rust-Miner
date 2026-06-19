@@ -1,13 +1,14 @@
 //! DERO AstroBWTv3 CPU miner — the runnable binary. Connects to a DERO daemon/pool
 //! over TLS-WebSocket getwork, mines with 2-way batched AstroBWTv3, submits shares.
 use clap::Parser;
+use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dero_miner::config::Config;
 use dero_miner::state::MinerState;
-use dero_miner::{hash_once, mining, net};
+use dero_miner::{hash_once, mining, net, term};
 
 const KAT: &str = "54e2324ddacc3f0383501a9e5760f85d63e9bc6705e9124ca7aef89016ab81ea";
 
@@ -21,7 +22,6 @@ fn main() -> anyhow::Result<()> {
         eprintln!("FATAL: KAT failed (pow(\"a\")={got})");
         std::process::exit(1);
     }
-    println!("KAT pow(\"a\") OK — hash is consensus-correct.");
 
     if cfg.wallet.is_empty() {
         eprintln!("FATAL: wallet address required (-w <dero...>)");
@@ -34,11 +34,12 @@ fn main() -> anyhow::Result<()> {
 
     let (host, port) = cfg.host_port();
     let threads = cfg.get_threads();
-    let wtail = &cfg.wallet[cfg.wallet.len().saturating_sub(6)..];
-    println!(
-        "dero-miner: {host}:{port}  wallet …{wtail}  threads {threads}  affinity {}",
-        cfg.affinity
-    );
+    term::enable_vt();
+    term::log_info("Dirtybird Miner");
+    term::log_info_pair("Server", &format!("{host}:{port}"));
+    term::log_info_pair("Wallet", &cfg.wallet);
+    term::log_info_pair("Threads", &threads.to_string());
+    println!();
 
     let state = Arc::new(MinerState::new());
 
@@ -71,20 +72,36 @@ fn main() -> anyhow::Result<()> {
         let rate = (now - prev) as f64 / dt / 1000.0;
         let avg = now as f64 / start.elapsed().as_secs_f64().max(0.001) / 1000.0;
         let (height, diff) = state.snapshot().map(|(j, _)| (j.height, j.difficulty)).unwrap_or((0, 0));
-        let conn = if state.connected.load(Ordering::Relaxed) { "up" } else { "down" };
-        println!(
-            "[dero-rs] {rate:6.2} KH/s ({avg:6.2} avg) | H:{height} | MB:{} | Blk:{} | REJ:{} | Diff:{diff} | net:{conn}",
-            state.miniblocks.load(Ordering::Relaxed),
-            state.blocks.load(Ordering::Relaxed),
-            state.rejected.load(Ordering::Relaxed),
+        let mb = state.miniblocks.load(Ordering::Relaxed);
+        let blk = state.blocks.load(Ordering::Relaxed);
+        let rej = state.rejected.load(Ordering::Relaxed);
+        let el = start.elapsed().as_secs();
+        let (hh, mm, ss) = (el / 3600, (el % 3600) / 60, el % 60);
+        let rc = if rej > 0 { term::BRIGHT_RED } else { term::WHITE };
+        let w = term::BRIGHT_WHITE;
+        // [DIRTYBIRD] rate KH/s (avg KH/s avg) | Height | Miniblocks | Blocks | REJ | Diff | HH:MM:SS
+        let mut line = format!(
+            "\r\x1b[K{by}[DIRTYBIRD] {bg}{rate:.2} KH/s{w} ({g}{avg:.2} KH/s avg{w}) | \
+             {blue}Height:{height}{w} | {mag}Miniblocks:{mb}{w} | {g}Blocks:{blk}{w} | \
+             {rc}REJ:{rej}{w} | {mag}Diff:{diff}{w} | {wt}{hh:02}:{mm:02}:{ss:02}{rst}",
+            by = term::BRIGHT_YELLOW,
+            bg = term::BRIGHT_GREEN,
+            g = term::GREEN,
+            blue = term::BLUE,
+            mag = term::MAGENTA,
+            wt = term::WHITE,
+            rst = term::RESET,
+            diff = term::abbrev(diff),
         );
         if cfg.verbose {
-            println!(
-                "  [funnel] submitted:{} stale_drops:{}",
+            line.push_str(&format!(
+                "{w} | sub:{} drops:{}",
                 state.submitted.load(Ordering::Relaxed),
                 state.stale_drops.load(Ordering::Relaxed),
-            );
+            ));
         }
+        print!("{line}");
+        let _ = std::io::stdout().flush();
         prev = now;
         prev_t = Instant::now();
     }
@@ -93,6 +110,6 @@ fn main() -> anyhow::Result<()> {
         let _ = w.join();
     }
     let _ = net_thread.join();
-    println!("miner stopped.");
+    println!("\nminer stopped.");
     Ok(())
 }

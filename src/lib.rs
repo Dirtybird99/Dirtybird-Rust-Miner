@@ -19,6 +19,7 @@ pub mod sa;
 pub mod sha_hw;
 pub mod state;
 pub mod sys;
+pub mod term;
 pub mod wolf;
 
 pub use pipeline::{hash, hash2, hash_once};

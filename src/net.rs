@@ -175,8 +175,11 @@ pub fn run(state: Arc<MinerState>, host: String, port: u16, wallet: String) {
     let url = format!("wss://{host}:{port}/ws/{wallet}");
     let mut backoff_ms = 1000u64;
     while !state.quit.load(Ordering::Relaxed) {
+        crate::term::log_info(&format!("Connecting ({host}:{port})"));
+        let t0 = Instant::now();
         match connect(&url, &host, port) {
             Ok(mut ws) => {
+                crate::term::log_info(&format!("Connected ({host}:{port}) ({} ms)", t0.elapsed().as_millis()));
                 state.connected.store(true, Ordering::Relaxed);
                 let useful = session(&mut ws, &state);
                 state.connected.store(false, Ordering::Relaxed);
@@ -184,7 +187,7 @@ pub fn run(state: Arc<MinerState>, host: String, port: u16, wallet: String) {
                 backoff_ms = if useful { 1000 } else { (backoff_ms * 2).min(30000) };
             }
             Err(e) => {
-                eprintln!("[net] connect to {host}:{port} failed: {e:#}");
+                crate::term::log_info(&format!("Connect failed ({host}:{port}): {e}"));
                 backoff_ms = (backoff_ms * 2).min(30000);
             }
         }
