@@ -1,0 +1,74 @@
+[package]
+name = "dirtybird-rust-miner"
+version = "0.1.0"
+edition = "2021"
+description = "DIRTYBIRD Rust Miner — cross-platform DERO AstroBWTv3 CPU miner (FFI-linked v1.14 descriptor suffix array)"
+authors = ["Dirtybird99"]
+license = "MIT"
+repository = "https://github.com/Dirtybird99/Dirtybird-Rust-Miner"
+readme = "README.md"
+# Only the explicit targets below are built (auto-discovery disabled for predictability).
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[lib]
+name = "dero_miner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dero-miner"
+path = "src/bin/dero-miner.rs"
+
+[[bin]]
+name = "selftest"
+path = "src/bin/selftest.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+
+[[bin]]
+name = "profile"
+path = "src/bin/profile.rs"
+
+[dependencies]
+# Final + initial SHA-256: emits SHA-NI on this CPU (matches the oracle byte-for-byte).
+sha2 = "0.10"
+# Canonical XXH64 (seed 0) used inside wolfCompute's re-mixing.
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+# Thread pinning (P-core-first affinity, +12% per the Zig log).
+core_affinity = "0.8"
+num_cpus = "1.16"
+# Network layer (DERO getwork over TLS-WebSocket) — synchronous tungstenite client over
+# rustls (pure-Rust TLS → cross-compiles to musl/aarch64/macOS with no OpenSSL toolchain).
+tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+rustls = "0.22"
+url = "2.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+parking_lot = "0.12"
+crossbeam = "0.8"
+ctrlc = "3.4"
+
+[build-dependencies]
+# Cross-platform C/C++ compilation of the vendored suffix array (honors the target triple
+# and CC/CXX, so the same sources build under system clang or `zig cc` cross-compiles).
+cc = "1.0"
+
+[features]
+default = []
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+
+[profile.release-pgo]
+inherits = "release"

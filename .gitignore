@@ -1,0 +1,27 @@
+# Rust / Cargo build outputs
+/target/
+**/target/
+
+# Compiled / linker artifacts
+*.exe
+*.obj
+*.pdb
+*.o
+*.a
+*.lib
+
+# PGO profiles (raw + merged) are regenerated locally; the one committed merged profile
+# is re-included further down so CI/release builds are PGO-optimized + reproducible.
+*.profdata
+*.profraw
+
+# Local logs, run output, scratch/experiment dirs
+*.log
+*.out
+_*/
+dist/
+
+# ...but re-include just the merged PGO profile (the rules above exclude _pgo/).
+!_pgo/
+_pgo/*
+!_pgo/merged.profdata

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build and Test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest, target: x86_64-pc-windows-gnu }
+          - { name: Linux,   os: ubuntu-latest,  target: x86_64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Add target
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+      # Built via cargo-zigbuild (zig cc compiles the vendored C suffix array for any
+      # target). x86-64 gets the SHA-NI/AVX2 fast path + PGO from the committed profile;
+      # SHA-NI is runtime-detected so the KAT validates correctness on any x86-64 runner.
+      - name: Build (cargo-zigbuild, ${{ matrix.target }})
+        shell: bash
+        run: cargo zigbuild --release --target ${{ matrix.target }} --bin dero-miner --bin selftest
+      - name: Self-test (pow(a) KAT)
+        shell: bash
+        run: |
+          BIN=target/${{ matrix.target }}/release/selftest
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          "$BIN"
+
+  arm64-emulated:
+    name: Build and KAT (linux-aarch64, emulated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Add target
+        run: rustup target add aarch64-unknown-linux-musl
+      # Cross-build a fully-static aarch64 musl binary and run its KAT under qemu-user
+      # (no SHA-NI/AVX2 on ARM -> portable soft-SHA + scalar wolf; the KAT still validates).
+      - name: Cross-build aarch64 (static) + KAT under QEMU
+        run: |
+          cargo zigbuild --release --target aarch64-unknown-linux-musl --bin selftest
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+          qemu-aarch64-static target/aarch64-unknown-linux-musl/release/selftest
+
+  hygiene:
+    name: Repo Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: No large files or CRLF in sources
+        run: |
+          big=$(git ls-files | while read -r f; do [ -f "$f" ] && find "$f" -size +5M; done)
+          if [ -n "$big" ]; then echo "::error::files larger than 5MB are tracked:"; echo "$big"; exit 1; fi
+          crlf=$(git ls-files '*.rs' '*.toml' '*.md' '*.yml' '*.sh' | xargs grep -lIP '\r$' 2>/dev/null || true)
+          if [ -n "$crlf" ]; then echo "::error::CRLF line endings found:"; echo "$crlf"; exit 1; fi
+          echo "OK: no oversized files, no CRLF in tracked sources."

@@ -1,0 +1,55 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-benchmark:
+    name: Synthetic Benchmark (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest, target: x86_64-pc-windows-gnu }
+          - { name: Linux,   os: ubuntu-latest,  target: x86_64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Add target
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+      # Synthetic, no-network hashrate run (2 threads, 8s, affinity off, 2-way SHA). CI
+      # runners are shared and not perf-representative -- a smoke/throughput sanity check.
+      - name: Build + run synthetic benchmark
+        shell: bash
+        run: |
+          cargo zigbuild --release --target ${{ matrix.target }} --bin bench
+          BIN=target/${{ matrix.target }}/release/bench
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          "$BIN" 2 8 0 2 2>&1 | tee "bench-${{ matrix.name }}.txt"
+      - name: Job summary
+        shell: bash
+        run: |
+          {
+            echo "### Synthetic benchmark (${{ matrix.name }})"
+            echo '```'
+            grep -E "KH/s|HASHRATE" "bench-${{ matrix.name }}.txt" || cat "bench-${{ matrix.name }}.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.name }}
+          path: bench-${{ matrix.name }}.txt
