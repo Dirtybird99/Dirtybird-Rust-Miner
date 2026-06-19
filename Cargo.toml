@@ -1,6 +1,6 @@
 [package]
 name = "dirtybird-rust-miner"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "DIRTYBIRD Rust Miner — cross-platform DERO AstroBWTv3 CPU miner (FFI-linked v1.14 descriptor suffix array)"
 authors = ["Dirtybird99"]
