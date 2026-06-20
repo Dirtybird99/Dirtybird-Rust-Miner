@@ -1,0 +1,35 @@
+# Build output
+/target/
+**/target/
+*.exe
+*.pdb
+*.dll
+*.obj
+*.ilk
+*.exp
+*.lib
+
+# Live cargo config (the nightly LTO config breaks stable builds — ship the
+# .example instead; see BUILDING-LTO.md)
+.cargo/config.toml
+
+# Profile-guided-optimization raw data (the canonical profile IS committed at
+# _pgo/dual.profdata; the old lowercase pgo/ clang-only profiles are superseded)
+*.profraw
+/pgo/
+
+# Build logs
+*.log
+
+# Obsidian-vault research notebooks (they live in the Obsidian vault, with working
+# wikilinks; excluded here so the public repo has no broken [[links]])
+/optimization-journey.md
+/performance-architecture.md
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+.vscode/
+.idea/

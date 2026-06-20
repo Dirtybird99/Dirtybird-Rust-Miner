@@ -1,0 +1,25 @@
+# ============================================================================
+# NIGHTLY cross-language-LTO build config — the peak-performance build.
+#
+# Copy this to `.cargo/config.toml` ONLY when doing the nightly LTO build.
+#
+# WARNING: with `.cargo/config.toml` present, *stable* `cargo build` FAILS —
+# the [unstable] table and `-Clinker-plugin-lto` require the nightly toolchain
+# whose LLVM matches the clang that compiles the vendored v114 C++. Delete (or
+# keep as this `.example`) for the normal stable build. See BUILDING-LTO.md.
+# ============================================================================
+
+[unstable]
+# Exclude host proc-macros from the linker-plugin-lto flags (otherwise the
+# `prefer-dynamic` proc-macro build conflicts with linker-plugin-lto on Windows).
+target-applies-to-host = false
+
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+  "-Ctarget-cpu=native",
+  # the committed dual rustc+clang PGO profile (path is relative to repo root)
+  "-Cprofile-use=_pgo/dual.profdata",
+  # emit LLVM bitcode and link with lld so rustc + clang-cl bitcode LTO together
+  "-Clinker-plugin-lto",
+  "-Clinker=lld-link",
+]

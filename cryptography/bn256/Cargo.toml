@@ -1,0 +1,16 @@
+[package]
+name = "dero-bn256"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DERO HE bn256 G1 group and base field — faithful Rust port of cryptography/bn256 (G1 subset)."
+
+[dependencies]
+num-bigint.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true

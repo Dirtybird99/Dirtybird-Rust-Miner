@@ -1,0 +1,72 @@
+[package]
+name = "dero-miner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DERO CPU miner (port of cmd/dero-miner) - getwork websocket client grinding AstroBWTv3 miniblock nonces."
+
+[[bin]]
+name = "dero-miner"
+path = "src/main.rs"
+
+[features]
+# Opt-in (default OFF). Grind AstroBWTv3 with the C libsais suffix-array backend
+# (~1.5x hashrate at full parallelism, measured). MUST stay default-off: with
+# resolver-v2 feature unification, a default-on feature here would compile ONE
+# shared dero-astrobwt rlib with libsais enabled for the WHOLE workspace, so a
+# bare `cargo build` would route verification paths through libsais too.
+#
+# Build the accelerated miner:
+# cargo build -p dero-miner --release --features libsais
+libsais = ["dero-astrobwt/libsais"]
+# Opt-in descriptor suffix-array backend used by Dirtybird's v1.14 miner path.
+# It depends on libsais as a correctness-preserving fallback.
+v114 = ["dero-astrobwt/v114"]
+
+[dependencies]
+dero-astrobwt = { path = "astrobwt" }
+dero-protocol = { path = "block" }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+sha1 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "astrobwt",
+    "block",
+    "cryptography/bn256",
+    "cryptography/crypto",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.80"
+
+[workspace.dependencies]
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
+sha3 = "0.10"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
+
+[profile.release-lto]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

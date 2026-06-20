@@ -1,0 +1,106 @@
+{
+ "job_json": "{\"jobid\":\"1748090000123.0.notified\",\"blockhashing_blob\":\"41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0ddeadbeefcafebabe12345678\",\"difficulty\":\"312979370\",\"difficultyuint64\":312979370,\"height\":3528900,\"prev_hash\":\"7be1d3851b2787140b542525bd21c1b5ab4b938af6eeb85156400a8542c4093e\",\"epochmilli\":0,\"blocks\":2,\"miniblocks\":105,\"rejected\":1,\"lasterror\":\"unregistered miner or you need to wait 15 mins\",\"status\":\"\"}\n",
+ "submit_json": "{\"jobid\":\"1748090000123.0.notified\",\"mbl_blob\":\"41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0ddeadbeefcafebabe12345678\"}",
+ "mutations": [
+  {
+   "blob_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0ddeadbeefcafebabe12345678",
+   "random_hex": "0102030405060708090a0b0c",
+   "tid": 0,
+   "i": 0,
+   "mutated_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0d010203040506070000000000",
+   "height": 3528900
+  },
+  {
+   "blob_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0ddeadbeefcafebabe12345678",
+   "random_hex": "0102030405060708090a0b0c",
+   "tid": 7,
+   "i": 1,
+   "mutated_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0d010203040506070000000107",
+   "height": 3528900
+  },
+  {
+   "blob_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0ddeadbeefcafebabe12345678",
+   "random_hex": "0102030405060708090a0b0c",
+   "tid": 254,
+   "i": 3735928559,
+   "mutated_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0d01020304050607deadbeeffe",
+   "height": 3528900
+  },
+  {
+   "blob_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0ddeadbeefcafebabe12345678",
+   "random_hex": "0102030405060708090a0b0c",
+   "tid": 255,
+   "i": 4294967295,
+   "mutated_hex": "41beef000035d8c41122334400000000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf0a0b0c0d01020304050607ffffffffff",
+   "height": 3528900
+  }
+ ],
+ "ws_accepts": [
+  {
+   "key": "dGhlIHNhbXBsZSBub25jZQ==",
+   "accept": "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+  },
+  {
+   "key": "AAAAAAAAAAAAAAAAAAAAAA==",
+   "accept": "ICX+Yqv66kxgM0FcWaLWlFLwTAI="
+  },
+  {
+   "key": "DERO+getwork/vector0001=",
+   "accept": "Zz3zmkHAj+DMRPvKzRux8Aw2ku8="
+  }
+ ],
+ "durations": [
+  {
+   "ns": 0,
+   "str": "0s"
+  },
+  {
+   "ns": 1,
+   "str": "1ns"
+  },
+  {
+   "ns": 999,
+   "str": "999ns"
+  },
+  {
+   "ns": 1100,
+   "str": "1.1µs"
+  },
+  {
+   "ns": 153167,
+   "str": "153.167µs"
+  },
+  {
+   "ns": 1234567,
+   "str": "1.234567ms"
+  },
+  {
+   "ns": 2200000,
+   "str": "2.2ms"
+  },
+  {
+   "ns": 1500000000,
+   "str": "1.5s"
+  },
+  {
+   "ns": 1531672800,
+   "str": "1.5316728s"
+  },
+  {
+   "ns": 61000000000,
+   "str": "1m1s"
+  },
+  {
+   "ns": 90500000000,
+   "str": "1m30.5s"
+  },
+  {
+   "ns": 3661000000000,
+   "str": "1h1m1s"
+  },
+  {
+   "ns": 7384005000000,
+   "str": "2h3m4.005s"
+  }
+ ]
+}
