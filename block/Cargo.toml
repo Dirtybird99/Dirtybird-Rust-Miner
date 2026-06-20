@@ -1,0 +1,17 @@
+[package]
+name = "dero-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DERO protocol types: bech32, addresses, transaction structures — port of rpc/ and transaction/."
+
+[dependencies]
+dero-bn256 = { path = "../cryptography/bn256" }
+dero-crypto = { path = "../cryptography/crypto" }
+num-bigint.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
