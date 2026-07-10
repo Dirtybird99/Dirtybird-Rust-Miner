@@ -19,9 +19,13 @@ path = "src/main.rs"
 # Build the accelerated miner:
 # cargo build -p dero-miner --release --features libsais
 libsais = ["dero-astrobwt/libsais"]
-# Opt-in descriptor suffix-array backend used by Dirtybird's v1.14 miner path.
-# It depends on libsais as a correctness-preserving fallback.
+# Opt-in descriptor suffix-array backend (pure Rust, astrobwt/src/v114.rs).
+# It depends on libsais as a correctness-preserving fallback. No C++ toolchain.
 v114 = ["dero-astrobwt/v114"]
+# Dev/verification: additionally compile the vendored C++ this was ported from,
+# so `DERO_V114_CPP=1` can select it for head-to-head A/B (see v114_ab.ps1).
+# Requires clang-cl on PATH.
+v114-cpp = ["v114", "dero-astrobwt/v114-cpp"]
 
 [dependencies]
 dero-astrobwt = { path = "astrobwt" }

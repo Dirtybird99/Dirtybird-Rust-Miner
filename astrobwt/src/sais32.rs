@@ -155,7 +155,7 @@ pub fn suffix_array_libsais(text: &[u8]) -> Vec<i32> {
     sa.as_slice().to_vec()
 }
 
-#[cfg(feature = "v114")]
+#[cfg(feature = "v114-cpp")]
 extern "C" {
     fn v114_sa_build_fused(
         data: *const u8,
@@ -191,7 +191,9 @@ extern "C" {
 /// CPU). One PoW hash runs entirely on one thread with a strict
 /// Init→Update*→Final sequence and no nesting, so a thread-local context is
 /// exact — we ignore the opaque `SHA256_CTX*` the C++ passes.
-#[cfg(feature = "v114")]
+///
+/// Exists only for the C++ backend; the Rust port calls `sha2` directly.
+#[cfg(feature = "v114-cpp")]
 mod sha_ni_shim {
     use core::ffi::c_void;
     use sha2::{Digest, Sha256};
@@ -261,13 +263,14 @@ pub(crate) fn build_v114_stage5_flags(
     Some(flags_len)
 }
 
-/// Backend A/B switch. The pure-Rust descriptor SA ([`crate::v114`]) is the
-/// production path; `DERO_V114_CPP=1` routes back to the vendored C++ so the
-/// two can be benchmarked head-to-head on one binary. Read once.
+/// Backend A/B switch, present only in `v114-cpp` builds. The pure-Rust
+/// descriptor SA ([`crate::v114`]) is the production path; `DERO_V114_CPP=1`
+/// routes back to the vendored C++ so the two can be measured head-to-head in
+/// one binary. Read once.
 ///
-/// The C++ is retained only as a differential-fuzz oracle and this A/B lever;
-/// it is deleted once the Rust path clears the BENCHMARKS.md perf gate.
-#[cfg(feature = "v114")]
+/// Under the plain `v114` feature the C++ is not compiled at all, so this does
+/// not exist and the Rust backend is unconditional.
+#[cfg(feature = "v114-cpp")]
 fn use_cpp_backend() -> bool {
     use std::sync::OnceLock;
     static CPP: OnceLock<bool> = OnceLock::new();
@@ -314,15 +317,17 @@ pub(crate) fn suffix_array_v114_into(
     }
     sa.resize(logical_len, 0);
 
-    if !use_cpp_backend() {
-        return crate::v114::sa_build_compact_fused(
-            data_with_tail,
-            logical_len,
-            &flags[..flag_len as usize],
-            sa.as_mut_slice(),
-        );
+    #[cfg(feature = "v114-cpp")]
+    if use_cpp_backend() {
+        return suffix_array_v114_cpp_into(data_with_tail, logical_len, flags, flag_len, sa);
     }
-    suffix_array_v114_cpp_into(data_with_tail, logical_len, flags, flag_len, sa)
+
+    crate::v114::sa_build_compact_fused(
+        data_with_tail,
+        logical_len,
+        &flags[..flag_len as usize],
+        sa.as_mut_slice(),
+    )
 }
 
 /// The vendored C++ descriptor SA, called directly. Reached from the A/B
@@ -332,7 +337,7 @@ pub(crate) fn suffix_array_v114_into(
 /// Preconditions (checked by the callers): little-endian; `logical_len > 0` and
 /// `<= u32::MAX`; `data_with_tail.len() >= logical_len + 3`; `flags[..flag_len]`
 /// built by [`build_v114_stage5_flags`]; `sa` already resized to `logical_len`.
-#[cfg(feature = "v114")]
+#[cfg(feature = "v114-cpp")]
 pub(crate) fn suffix_array_v114_cpp_into(
     data_with_tail: &[u8],
     logical_len: usize,
@@ -397,19 +402,17 @@ pub(crate) fn hash_v114_fused_into(
     }
     let flag_len = build_v114_stage5_flags(markers, logical_len, flags)?;
 
-    if !use_cpp_backend() {
-        return crate::v114::hash_compact_fused(
-            data_with_tail,
-            logical_len,
-            &flags[..flag_len as usize],
-        );
+    #[cfg(feature = "v114-cpp")]
+    if use_cpp_backend() {
+        return hash_v114_cpp_fused_into(data_with_tail, logical_len, flags, flag_len);
     }
-    hash_v114_cpp_fused_into(data_with_tail, logical_len, flags, flag_len)
+
+    crate::v114::hash_compact_fused(data_with_tail, logical_len, &flags[..flag_len as usize])
 }
 
 /// The vendored C++ fused hash, called directly — the pinned-backend twin of
 /// [`suffix_array_v114_cpp_into`]. Same preconditions.
-#[cfg(feature = "v114")]
+#[cfg(feature = "v114-cpp")]
 pub(crate) fn hash_v114_cpp_fused_into(
     data_with_tail: &[u8],
     logical_len: usize,

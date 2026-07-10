@@ -11,7 +11,10 @@ fn main() {
     println!("cargo:rerun-if-changed=vendor/v114/libsais.h");
     println!("cargo:rerun-if-changed=vendor/v114/openssl/sha.h");
 
-    if std::env::var_os("CARGO_FEATURE_V114").is_none() {
+    // Only the `v114-cpp` (dev/verification) feature compiles the vendored C++.
+    // The production `v114` feature is the pure-Rust port in src/v114.rs and
+    // needs no C++ toolchain — no clang-cl, no cross-language LTO.
+    if std::env::var_os("CARGO_FEATURE_V114_CPP").is_none() {
         return;
     }
 

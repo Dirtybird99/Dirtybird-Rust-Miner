@@ -12,18 +12,30 @@
 param(
     [int]$Seconds = 30,
     [int]$Threads = 24,
-    [int]$Rounds  = 8
+    [int]$Rounds  = 8,
+    [ValidateSet('release', 'release-lto')]
+    [string]$Profile = 'release'
 )
 
 $ErrorActionPreference = 'Stop'
-$exe = Join-Path $PSScriptRoot 'target\release\dero-miner.exe'
+$exe = Join-Path $PSScriptRoot "target\$Profile\dero-miner.exe"
 if (-not (Test-Path $exe)) {
-    throw "missing $exe -- build first: cargo build --release --features v114"
+    throw "missing $exe -- build it with BOTH backends compiled in:`n" +
+          "  cargo build --profile $Profile -p dero-miner --features v114-cpp"
 }
+# A stale or half-relinked exe silently produces nonsense (a locked binary makes
+# cargo fail AFTER leaving an old one in place). Refuse to measure it.
+if (Get-Process -Name 'dero-miner' -ErrorAction SilentlyContinue) {
+    throw 'dero-miner is already running -- kill it before measuring'
+}
+$age = (Get-Date) - (Get-Item $exe).LastWriteTime
+Write-Host ("binary: {0}  ({1:N1} min old)" -f $exe, $age.TotalMinutes)
 
 function Invoke-Backend {
     param([string]$Backend)
 
+    # `v114-cpp` builds only: without it the C++ is not compiled and
+    # DERO_V114_CPP is ignored, which would silently measure Rust twice.
     if ($Backend -eq 'cpp') { $env:DERO_V114_CPP = '1' } else { Remove-Item Env:\DERO_V114_CPP -ErrorAction SilentlyContinue }
 
     $p = Start-Process -FilePath $exe `
@@ -40,7 +52,7 @@ function Invoke-Backend {
     throw "could not parse throughput for backend=$Backend"
 }
 
-Write-Host "v114 backend A/B -- $Threads threads, ${Seconds}s window, $Rounds rounds`n"
+Write-Host "v114 backend A/B -- $Profile, $Threads threads, ${Seconds}s window, $Rounds rounds`n"
 Write-Host ('{0,-6} {1,9} {2,9} {3,9}  {4}' -f 'round', 'RUST', 'CPP', 'delta', 'winner')
 
 $rustAll = @(); $cppAll = @(); $rustWins = 0; $cppWins = 0; $ties = 0

@@ -11,9 +11,15 @@ default = []
 # Opt-in: route AstroBWTv3's suffix-array step through the C library libsais.
 # Enabled only by the (fail-safe) miner; verification paths stay on pure Rust.
 libsais = ["dep:libsais-sys"]
-# Opt-in: Dirtybird v1.14 descriptor suffix-array backend for mining. The
-# backend falls back to libsais if descriptor construction refuses an input.
+# Opt-in: Dirtybird v1.14 descriptor suffix-array backend for mining, in pure
+# Rust (src/v114.rs). Falls back to libsais if descriptor construction refuses
+# an input. Needs no C++ toolchain.
 v114 = ["libsais"]
+# Dev/verification only: ALSO compile the vendored C++ descriptor SA
+# (vendor/v114) that `v114` was ported from, so the two can be differentially
+# fuzzed and benchmarked head-to-head (DERO_V114_CPP=1 selects it at runtime).
+# Requires clang-cl on PATH; `v114` alone does not.
+v114-cpp = ["v114"]
 # Opt-in: per-stage rdtsc instrumentation (measurement only). Adds a separate
 # profiled pipeline; the production hot path is untouched.
 profiling = []

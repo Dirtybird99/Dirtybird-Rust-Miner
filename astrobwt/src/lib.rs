@@ -40,8 +40,12 @@ pub use suffixarray::suffix_array as suffix_array_reference;
 #[cfg(feature = "v114")]
 pub(crate) mod v114;
 
-#[cfg(all(test, feature = "v114"))]
+/// Rust-vs-C++ differential tests. Need the vendored C++ compiled in, so they
+/// only exist under `v114-cpp`.
+#[cfg(all(test, feature = "v114-cpp"))]
 mod v114_diff_tests;
+/// Replay of the frozen `v114_golden.json` fixture. Backend-agnostic: it pins
+/// the CURRENT backend's behavior, so it guards the pure-Rust `v114` build too.
 #[cfg(all(test, feature = "v114"))]
 mod v114_golden_tests;
 
