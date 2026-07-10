@@ -25,15 +25,22 @@ fn main() {
         .file("vendor/v114/v114_stubs.cpp")
         .file("vendor/v114/v114_wrapper.cpp");
 
-    // CORRECTNESS-CRITICAL: the descriptor-SA C++ relies on behavior that
-    // MSVC `cl.exe` miscompiles — it produces a valid-but-mis-ordered suffix
-    // array for ~1.4% of inputs (verified by differential fuzzing vs libsais,
-    // at every optimization level including /Od), yielding wrong PoW hashes.
-    // clang compiles it correctly (verified: 0 mismatches over 85k hashes via
-    // the reference miner's DLUNA_VERIFY_STAGE5_DESCRIPTOR mode). On a Windows
-    // MSVC host we therefore compile this single object with **clang-cl**
-    // (clang front-end, MSVC ABI — links cleanly into the MSVC Rust build),
-    // using the reference miner's exact, verified-correct hot-path flags.
+    // CORRECTION (2026-07-10): the "~1.4% of inputs" figure below was a
+    // MISATTRIBUTION. optimization-journey.md §2 traces that symptom to a
+    // Rust-side bug — `Vec::resize` zeroes only newly-appended bytes, leaving
+    // real op-loop bytes in the 3-byte `load24` tail — which fires on
+    // 15/1024 = 1.46% of inputs, matching the rate exactly. Fixing the tail
+    // zero-fill took the diagnostic from 284/20000 divergences to 0/20000, and
+    // the C++ was independently byte-exact via its own
+    // DLUNA_VERIFY_STAGE5_DESCRIPTOR oracle. A compiler experiment built the
+    // descriptor with clang-cl / clang++ / MinGW-g++ at O0 and O3: all correct
+    // given a zero tail. So this was a PORT bug, not a miscompile.
+    //
+    // Whether MSVC `cl.exe` *also* miscompiles this TU was never tested in
+    // isolation, so clang-cl is retained here out of caution rather than
+    // demonstrated necessity. This path now only builds under the dev-only
+    // `v114-cpp` feature; production uses the pure-Rust port (src/v114.rs),
+    // which needs no C++ toolchain and no flag discipline at all.
     let compiler = cpp.get_compiler();
     if compiler.is_like_msvc() {
         let is_clang_cl = compiler

@@ -93,10 +93,56 @@ the absolute numbers are lower; only the *delta* is meaningful here.
 | 6 | 18.62 | 18.33 | +1.58% | RUST |
 | **avg** | **18.47** | **18.30** | **+0.91%** | **5 W / 1 L / 0 T** |
 
-**Verdict: parity, leaning ahead.** The sign test over the 6 decided rounds gives
-p ≈ 0.22 — *not* significant, so this is **not** a claimed win. The honest reading is that
-the Rust backend is indistinguishable from the C++ at saturation, on the right side of the
-line. Single-thread `sa_bench` is a dead heat (1458 vs 1457 H/s).
+Sign test on that run: p ≈ 0.22 — not significant on its own. A second, independent 6-round
+run on a clean rebuild of the same tree:
+
+| run | RUST | CPP | delta | rounds | sign test |
+|---|---|---|---|---|---|
+| 1 | 18.47 | 18.30 | +0.91% | 5 W / 1 L | p ≈ 0.22 (n.s.) |
+| 2 | 18.57 | 18.36 | **+1.14%** | **6 W / 0 L** | **p = 0.031** |
+
+**Verdict: the Rust backend is at least at parity, and probably ~1% ahead.** Run 2 is
+significant and every round in both runs but one favors Rust; but ~1% is close enough to the
+cross-run spread that "a small real win" is the strongest honest claim, not a headline
+number. Single-thread `sa_bench` is a dead heat (1458 vs 1457 H/s), which is what you would
+expect if the win comes from allocation/memory behaviour at saturation rather than from the
+scalar inner loops.
+
+### `release-lto` is a pessimization for the Rust backend — use `release`
+
+The same A/B on the `release-lto` profile (`lto = "fat"`, `codegen-units = 1`) reverses
+the result, and this one *is* significant:
+
+| profile | RUSTFLAGS | RUST | CPP | delta | sign test |
+|---|---|---|---|---|---|
+| `release` | (none) | **18.47 / 18.57** | 18.30 / 18.36 | **+0.91% / +1.14%** | p ≈ 0.22 / p = 0.031 |
+| `release-lto` | (none) | 17.46 | 18.22 | −4.20% | p = 0.031, 0 W / 6 L |
+| `release-lto` | `-C target-cpu=x86-64-v3` | 17.27 | 18.16 | −4.87% | p = 0.031, 0 W / 6 L |
+
+Read the **columns**, not just the deltas. The C++ scores ~18.2 KH/s under *both* profiles —
+it is a separate translation unit compiled by clang either way, so the Rust profile cannot
+touch it. The Rust backend drops from 18.47 to ~17.3–17.5 when fat LTO + `codegen-units=1`
+is switched on. **Fat LTO makes the Rust descriptor SA ~6% slower than plain `release`.**
+The apparent "C++ wins under LTO" is really "LTO hurts Rust here."
+
+`-C target-cpu=x86-64-v3` does **not** explain it. The natural hypothesis was an unfair
+comparison — `build.rs` hands the C++ `-march=x86-64-v3 -mtune=raptorlake -mavx2`
+unconditionally, while rustc defaults to the x86-64 baseline. Matching the ISA made Rust
+*slightly worse*, so the gap is inlining/register-allocation under `codegen-units = 1`, not
+the instruction set. Hypothesis raised, tested, refuted.
+
+**Recommendation: build the pure-Rust `v114` backend with the plain `release` profile.**
+`release-lto` existed to LTO the Rust and the C++ *together*; with no C++ in the build there
+is nothing to link across, and fat LTO's remaining effect here is negative.
+
+Untried lever: single-language rustc PGO (`-Cprofile-generate` / `-Cprofile-use`). The C++
+path historically gained ~12.5% from clang PGO on the descriptor TU, so this is the obvious
+next experiment — and it is now a one-toolchain operation instead of the dual rustc+clang
+profile dance in [BUILDING-LTO.md](BUILDING-LTO.md).
+
+> Absolute numbers here are **not** comparable to the 22.3 KH/s headline at the top of this
+> file: that build used nightly dual-PGO + cross-language LTO + `target-cpu=native`. None of
+> the runs in this section use PGO. Only the RUST-vs-CPP delta *within* a row is meaningful.
 
 Correctness is byte-exact, not merely "passes tests": the Rust SA, the C++ SA, and libsais
 agree element-for-element; the fused hash equals `sha256(materialized SA)`; and both
