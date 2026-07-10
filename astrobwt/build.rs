@@ -25,22 +25,27 @@ fn main() {
         .file("vendor/v114/v114_stubs.cpp")
         .file("vendor/v114/v114_wrapper.cpp");
 
-    // CORRECTION (2026-07-10): the "~1.4% of inputs" figure below was a
-    // MISATTRIBUTION. optimization-journey.md §2 traces that symptom to a
-    // Rust-side bug — `Vec::resize` zeroes only newly-appended bytes, leaving
-    // real op-loop bytes in the 3-byte `load24` tail — which fires on
-    // 15/1024 = 1.46% of inputs, matching the rate exactly. Fixing the tail
-    // zero-fill took the diagnostic from 284/20000 divergences to 0/20000, and
-    // the C++ was independently byte-exact via its own
-    // DLUNA_VERIFY_STAGE5_DESCRIPTOR oracle. A compiler experiment built the
-    // descriptor with clang-cl / clang++ / MinGW-g++ at O0 and O3: all correct
-    // given a zero tail. So this was a PORT bug, not a miscompile.
+    // CORRECTION (2026-07-10): this file used to claim MSVC `cl.exe` miscompiles
+    // the descriptor SA, producing a valid-but-mis-ordered suffix array for
+    // "~1.4% of inputs". That was a MISATTRIBUTION of a Rust-side bug.
+    //
+    // The real cause: the descriptor reads 3 bytes past `data_len` (a `load24`)
+    // and those bytes must be zero. The caller's tail zero-fill used
+    // `Vec::resize`, which zeroes only NEWLY-APPENDED bytes — leaving live
+    // op-loop bytes in the tail whenever the buffer was already long enough.
+    // That fires on exactly 15/1024 = 1.46% of inputs, matching the observed
+    // rate. Fixing the fill (see `astrobwtv3_with_scratch` in src/lib.rs) took
+    // the descriptor-vs-libsais fuzz from 284/20000 divergences to 0/20000.
+    // Independently: the C++ verified byte-exact under its own upstream
+    // DLUNA_VERIFY_STAGE5_DESCRIPTOR oracle, and building the descriptor with
+    // clang-cl, clang++ and MinGW-g++ at both O0 and O3 gave identical correct
+    // results given a zero tail. It was a PORT bug, not a miscompile.
     //
     // Whether MSVC `cl.exe` *also* miscompiles this TU was never tested in
-    // isolation, so clang-cl is retained here out of caution rather than
-    // demonstrated necessity. This path now only builds under the dev-only
-    // `v114-cpp` feature; production uses the pure-Rust port (src/v114.rs),
-    // which needs no C++ toolchain and no flag discipline at all.
+    // isolation, so clang-cl and the no-vectorize flags are retained out of
+    // caution rather than demonstrated necessity. This whole path now builds
+    // only under the dev-only `v114-cpp` feature; production uses the pure-Rust
+    // port (src/v114.rs), which needs no C++ toolchain and no flag discipline.
     let compiler = cpp.get_compiler();
     if compiler.is_like_msvc() {
         let is_clang_cl = compiler

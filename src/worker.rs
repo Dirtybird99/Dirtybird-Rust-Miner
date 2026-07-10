@@ -243,13 +243,21 @@ pub fn grind_job_with_scratch(
             record_hash(shared, &mut pending_hashes);
 
             if check_pow_hash_precomputed(&pow, &target) {
-                // verify-on-submit: the v114 descriptor SA is ~1.4% non-canonical,
-                // so a hash that clears the target here MIGHT be wrong. Recompute
-                // the CANONICAL PoW (libsais/pure-Rust SA, byte-exact vs the Go
-                // reference) and only submit if THAT clears the target — we never
-                // submit a share the network would reject. This costs a full
-                // canonical hash, but only on a target-clearing nonce (vanishingly
-                // rare at real difficulty), so steady-state hashrate is unaffected.
+                // verify-on-submit (defense in depth): recompute the CANONICAL PoW
+                // — SA-IS / libsais, byte-exact vs the Go reference — and submit
+                // only if THAT also clears the target. We never submit a share the
+                // network would reject. Costs a full canonical hash, but only on a
+                // target-clearing nonce (vanishingly rare at real difficulty), so
+                // steady-state hashrate is unaffected.
+                //
+                // Historically this guarded a real defect: the descriptor SA was
+                // ~1.4% non-canonical because the caller left non-zero bytes in the
+                // 3-byte `load24` tail. That bug is fixed and the descriptor path
+                // (now pure Rust, astrobwt/src/v114.rs) is byte-exact under 20k-case
+                // differential fuzzing. The check stays anyway: it is nearly free,
+                // it is independent of the descriptor backend, and it turns any
+                // future SA bug — or a hardware glitch — into a lost share rather
+                // than a rejected one.
                 let canonical_ok = if height >= hf2_height {
                     let canon = dero_astrobwt::astrobwtv3_full(&work).0;
                     check_pow_hash_precomputed(&canon, &target)

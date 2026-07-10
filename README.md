@@ -1,15 +1,22 @@
-# DERO AstroBWTv3 CPU Miner — Rust (fused + cross-language-LTO build)
+# DERO AstroBWTv3 CPU Miner — Rust (fused, pure-Rust suffix array)
 
 A Rust CPU miner for **DERO**'s AstroBWTv3 proof-of-work — a port of the Go reference
-`cmd/dero-miner`, with the hot **v114 descriptor suffix-array** stage vendored as C++
-(`astrobwt/vendor/v114/`) and compiled by clang-cl. ONE CPU, ONE VOTE.
+`cmd/dero-miner`. The hot **v114 descriptor suffix-array** stage (~74–88% of every hash) is
+**pure Rust** (`astrobwt/src/v114.rs`, `#![forbid(unsafe_code)]`), ported from the C++ that
+used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
 
 > This is the **`fused-lto-win`** branch: a *different, faster* codebase from `main`. It
-> trades `main`'s cross-platform packaging for a single fused hashing path plus a
-> dual-PGO + cross-language-LTO build that, on an i7-13700HX, runs **+9–14% faster than
+> trades `main`'s cross-platform packaging for a single fused hashing path that, on an
+> i7-13700HX, runs **+9–14% faster than
 > [Dirtybird-Rust-Miner](https://github.com/Dirtybird99/Dirtybird-Rust-Miner) `main`** and
-> **edges the Dirtybird C miner at peak**. Full, honestly-calibrated numbers in
+> **matches the Dirtybird C miner at peak**. Full, honestly-calibrated numbers in
 > [BENCHMARKS.md](BENCHMARKS.md).
+>
+> Note the historical peak (22.3 KH/s) came from a nightly dual-PGO + cross-language-LTO
+> build. That build is obsolete: there is no C++ left to LTO across. The `+9–14%` and C-miner
+> figures above predate the pure-Rust suffix array and have **not** been re-measured against
+> those competitors since; what *has* been re-measured, head-to-head on one binary, is the
+> Rust SA vs the C++ SA it replaced (~+1%, see BENCHMARKS.md).
 
 ## Highlights
 
@@ -17,20 +24,27 @@ A Rust CPU miner for **DERO**'s AstroBWTv3 proof-of-work — a port of the Go re
   C miner, edging it +0.5% at 24T peak (6 wins / 0 losses / 2 ties over 8 rounds). See
   [BENCHMARKS.md](BENCHMARKS.md) — including the caveats (the C margin is within cross-tool
   measurement noise; the Rust-vs-Rust margin is not).
-- **Correct.** Byte-exact AstroBWTv3 (`fused_v114_matches_reference_fuzz`, 0/20000 fuzzed
-  divergences), plus **verify-on-submit**: any target-clearing share is re-checked with the
-  canonical PoW before it is sent, so a hardware/miscompile glitch can never submit garbage.
+- **Correct.** Byte-exact AstroBWTv3: the pure-Rust descriptor SA, the C++ it was ported
+  from, and libsais agree element-for-element over 20,000 differential-fuzz cases and a
+  committed 532-case golden fixture, with identical *refusal* behaviour. Plus
+  **verify-on-submit**: any target-clearing share is re-checked with the canonical
+  (SA-IS/libsais) PoW before it is sent, so a bug or hardware glitch costs a share rather
+  than submitting garbage.
+- **No unsafe in the hot path.** `astrobwt/src/v114.rs` is `#![forbid(unsafe_code)]`, and
+  no C++ is compiled unless you opt into the `v114-cpp` verification feature.
 - **Honest benchmarking built in.** `--sustained` is a counter-summed, fixed-window scoreboard
   (the per-thread `--bench` table understates hybrid-CPU throughput). [`headtohead.ps1`](headtohead.ps1)
   reproduces the head-to-head vs the C miner.
 
 ## Build
 
-**Requirement:** LLVM's **`clang-cl` must be on `PATH`** (e.g. `C:\Program Files\LLVM\bin`).
-`build.rs` compiles the vendored v114 C++ with clang-cl and `-fno-vectorize`/`-fno-slp-vectorize`
-— a deliberate workaround for an MSVC `cl.exe` auto-vectorization miscompile of the descriptor
-suffix array. This applies to **every** build, stable included; without clang-cl the build fails
-with `failed to find tool "clang-cl"`.
+**No C++ toolchain required.** The descriptor suffix array is Rust, so a plain stable
+`cargo build` is the whole story — no `clang-cl`, no matched-LLVM nightly, no
+`.cargo/config.toml`. Use the plain `release` profile: fat LTO (`--profile release-lto`) is
+a ~6% *pessimization* for the Rust backend, see [BENCHMARKS.md](BENCHMARKS.md).
+
+The vendored C++ is retained only as a differential oracle behind the dev-only `v114-cpp`
+feature, which *does* need `clang-cl` on `PATH`. See [BUILDING-LTO.md](BUILDING-LTO.md).
 
 ```sh
 cargo build --release -p dero-miner --features v114      # stable; ~parity with C
