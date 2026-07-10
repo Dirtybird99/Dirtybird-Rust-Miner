@@ -1,0 +1,52 @@
+[
+  {
+    "secret_dec": "1",
+    "mainnet": "dero1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqgwtmndv",
+    "testnet": "deto1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqg5j8tgy"
+  },
+  {
+    "secret_dec": "2",
+    "mainnet": "dero1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkqqggwyr7",
+    "testnet": "deto1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkqqj3juxk"
+  },
+  {
+    "secret_dec": "3",
+    "mainnet": "dero1qyv8w69hhfz83lv5wjgdx8t0zr8rj0r598s3vm6z5kaurkdys73nvqqj9e539",
+    "testnet": "deto1qyv8w69hhfz83lv5wjgdx8t0zr8rj0r598s3vm6z5kaurkdys73nvqqgu9v5d"
+  },
+  {
+    "secret_dec": "7",
+    "mainnet": "dero1qyph9m3del2p7nk7l8jvem9efxyc3m0ntku8vavmfta5sdquwzpfwqgzwjqsp",
+    "testnet": "deto1qyph9m3del2p7nk7l8jvem9efxyc3m0ntku8vavmfta5sdquwzpfwqgchwc4f"
+  },
+  {
+    "secret_dec": "42",
+    "mainnet": "dero1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqgcddd9x",
+    "testnet": "deto1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqgz534qw"
+  },
+  {
+    "secret_dec": "255",
+    "mainnet": "dero1qy9y75s8k8m80h4zvev6q7rajrjweuvyvkhhjds4uykpzuy25xf97qgrvkg3r",
+    "testnet": "deto1qy9y75s8k8m80h4zvev6q7rajrjweuvyvkhhjds4uykpzuy25xf97qge42s5t"
+  },
+  {
+    "secret_dec": "65537",
+    "mainnet": "dero1qy0wm3k0v9rp8npfwg3wgnh9d4caqht8n8pz22cc5f7zzvtmws4psqqv70tvu",
+    "testnet": "deto1qy0wm3k0v9rp8npfwg3wgnh9d4caqht8n8pz22cc5f7zzvtmws4psqqk8nnf5"
+  },
+  {
+    "secret_dec": "123456789012345678901234567890",
+    "mainnet": "dero1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7qqap9jag",
+    "testnet": "deto1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7qq8ce2cq"
+  },
+  {
+    "secret_dec": "9999999999999999999999999999999999999999999999999999999999999999",
+    "mainnet": "dero1qytmrq9cpkvcfl95j9dmyufkwaketrmhfneeweryc08wy2j4pfckcqghr6xsu",
+    "testnet": "deto1qytmrq9cpkvcfl95j9dmyufkwaketrmhfneeweryc08wy2j4pfckcqgd6x745"
+  },
+  {
+    "secret_dec": "16798108731015832284940804142231733909759579603404752749028378864165570215948",
+    "mainnet": "dero1qy8u5du6qqhedfr8u2tnf8x2qsq80a6tc58z0j98xll48p4hrucrqqg2c633d",
+    "testnet": "deto1qy8u5du6qqhedfr8u2tnf8x2qsq80a6tc58z0j98xll48p4hrucrqqgspxf59"
+  }
+]

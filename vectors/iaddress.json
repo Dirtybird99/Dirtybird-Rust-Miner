@@ -1,0 +1,91 @@
+{
+  "fixed": [
+    {
+      "addr": "deroproof1qy4rnmqv5zscgqamvqjt43zac2twr67q2u32tcjxjw4h0crh8g03uqdzvfyyskpq42aueh0wluqpzg3ng32kvaugnx4thnxaamlsqyfzxdz92enh3zvky4j4rgpgph5quvvjr0",
+      "args": [
+        {
+          "datatype": "H",
+          "name": "H",
+          "value": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+        },
+        {
+          "datatype": "U",
+          "name": "V",
+          "value": "42000000"
+        }
+      ],
+      "mainnet": true,
+      "proof": true,
+      "pubkey_hex": "2a39ec0ca0a18403bb6024bac45dc296e1ebc05722a5e24693ab77e0773a1f1e01",
+      "reencoded": "deroproof1qy4rnmqv5zscgqamvqjt43zac2twr67q2u32tcjxjw4h0crh8g03uqdzvfyyskpq42aueh0wluqpzg3ng32kvaugnx4thnxaamlsqyfzxdz92enh3zvky4j4rgpgph5quvvjr0"
+    }
+  ],
+  "mixed": [
+    {
+      "args_cbor_hex": "a36243536b6d697865642074797065736252415821187768b7ba4478fd947490d31d6f10ce393c7429e1166f42a5bbc1d9a487a336006258493a075bcd14",
+      "integrated_main": "deroi1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqdrvfp4x6mdd9ux2epqw3uhqetnvffyzkpprpmk3da6g3u0m9r5jrf36mcsecuncapfuytx7s49h0qanfy85vmqqcjcfyaqwk7dzsx9yuzs",
+      "reply_secret_dec": "3",
+      "secret_dec": "42"
+    }
+  ],
+  "pong": [
+    {
+      "args_cbor_hex": "a46243536d507572636861736520504f4e476244551b1234567812345678624e5500625655193039",
+      "args_noamount_cbor_hex": "a36243536d507572636861736520504f4e476244551b1234567812345678624e5500",
+      "base_main": "dero1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqgwtmndv",
+      "base_test": "deto1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqg5j8tgy",
+      "integrated_main": "deroi1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqdyvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwgww3643",
+      "integrated_main_noamount": "deroi1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqdrvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sq2faa66",
+      "integrated_test": "detoi1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqdyvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwgehxyk6",
+      "integrated_test_noamount": "detoi1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqdrvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sq8pcy5t",
+      "secret_dec": "1"
+    },
+    {
+      "args_cbor_hex": "a46243536d507572636861736520504f4e476244551b1234567812345678624e5500625655193039",
+      "args_noamount_cbor_hex": "a36243536d507572636861736520504f4e476244551b1234567812345678624e5500",
+      "base_main": "dero1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkqqggwyr7",
+      "base_test": "deto1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkqqj3juxk",
+      "integrated_main": "deroi1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkq9yvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwg5fczqt",
+      "integrated_main_noamount": "deroi1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkq9rvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqzsexph",
+      "integrated_test": "detoi1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkq9yvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwgrs0urq",
+      "integrated_test_noamount": "detoi1qytj8jd4crzh86wjqtl2qfpatla9ef0p4h8a2rgvp4fufrslry8qkq9rvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sq0cul0x",
+      "secret_dec": "2"
+    },
+    {
+      "args_cbor_hex": "a46243536d507572636861736520504f4e476244551b1234567812345678624e5500625655193039",
+      "args_noamount_cbor_hex": "a36243536d507572636861736520504f4e476244551b1234567812345678624e5500",
+      "base_main": "dero1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqgcddd9x",
+      "base_test": "deto1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqgz534qw",
+      "integrated_main": "deroi1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqdyvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwgp47cej",
+      "integrated_main_noamount": "deroi1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqdrvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqq7fakj",
+      "integrated_test": "detoi1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqdyvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwgkvfx6e",
+      "integrated_test_noamount": "detoi1qy9ryrcg43hnk6n8nnz3tz8yr5eyd73nsmtw3j6gps0h9fwfwknvvqdrvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqdkvycr",
+      "secret_dec": "42"
+    },
+    {
+      "args_cbor_hex": "a46243536d507572636861736520504f4e476244551b1234567812345678624e5500625655193039",
+      "args_noamount_cbor_hex": "a36243536d507572636861736520504f4e476244551b1234567812345678624e5500",
+      "base_main": "dero1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7qqap9jag",
+      "base_test": "deto1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7qq8ce2cq",
+      "integrated_main": "deroi1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7q9yvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwg57fs6h",
+      "integrated_main_noamount": "deroi1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7q9rvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2squj9en7",
+      "integrated_test": "detoi1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7q9yvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sqcjk25vnqwgr87weu",
+      "integrated_test_noamount": "detoi1qyscsqpapud34jpfmjv0y4xhunz7e9lsuylsxdq6xpgfx52qkjca7q9rvfp4xm2sw4exx6rpwdjjq5z0ferky3z4rvfrg4nczg69v7rzfe2sq36qqa0",
+      "secret_dec": "123456789012345678901234567890"
+    }
+  ],
+  "proof": [
+    {
+      "proof_addr": "deroproof1qyph9m3del2p7nk7l8jvem9efxyc3m0ntku8vavmfta5sdquwzpfwqdzvfyyskpqzy3rx3z4vemc3xgqzy3rx3z4vemc3xgqzy3rx3z4vemc3xgqzy3xy4j4rgqq7sjqv6jqzn",
+      "secret_dec": "7",
+      "shared_key_hex": "1122334455667788990011223344556677889900112233445566778899001122",
+      "value": 1000000
+    },
+    {
+      "proof_addr": "deroproof1qy57wuxr4f49k64e7kfc3aq6s03ur7w7ttpjx5zhzz8ta38hkpuu2q9zvfyyskpq42aueh0wluqpzg3ng32kvaugnx4thnxaamlsqyfzxdz92enh3z4ky4j4rgqpapyq7u8mzz",
+      "secret_dec": "999999999",
+      "shared_key_hex": "aabbccddeeff00112233445566778899aabbccddeeff001122334455667788ab",
+      "value": 2000000
+    }
+  ]
+}

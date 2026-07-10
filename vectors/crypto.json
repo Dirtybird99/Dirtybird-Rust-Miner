@@ -1,0 +1,164 @@
+{
+  "hash_to_number": [
+    {
+      "dec": "45095987480298626377023005657157468516432959274801859861318205554864576714685",
+      "input": "DEROG"
+    },
+    {
+      "dec": "61209229749929997752737409788132271313243213553760250728151210095099409933740",
+      "input": "DEROH"
+    },
+    {
+      "dec": "26577169521080041468048461869858263792019104904445492498349147139819994214859",
+      "input": "a"
+    },
+    {
+      "dec": "114260433906726144464126206255692124545809652358677801192147040655085539825050",
+      "input": "seed-123"
+    }
+  ],
+  "hash_to_point": [
+    {
+      "marshal": "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002",
+      "seed_dec": "1"
+    },
+    {
+      "marshal": "000000000000000000000000000000000000000000000000000000000000010013f2f10a8301b4927323ce9e67abb2ee46a0913a5f77d3197761e6af9bedbeff",
+      "seed_dec": "255"
+    },
+    {
+      "marshal": "00000000000000000000000000000000000000000000000000000000075bcd1600458a1be2d04c72fe7bb9ec4a16ff515e289b037d3bb49d8e0c852fb3bccf0b",
+      "seed_dec": "123456789"
+    },
+    {
+      "marshal": "0000000000000000000000000000000000000000000000000de0b6b3a763ffff2007e14e3fc36360b3b8e0d2d84201bc1846c51422777271978313fe4655f529",
+      "seed_dec": "999999999999999999"
+    }
+  ],
+  "keccak256": [
+    {
+      "hex": "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "input": ""
+    },
+    {
+      "hex": "3ac225168df54212a25c1c01fd35bebfea408fdac2e31ddd6f80a4bbf9a5f1cb",
+      "input": "a"
+    },
+    {
+      "hex": "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45",
+      "input": "abc"
+    },
+    {
+      "hex": "dae9f38a01b6f0a15aadef89b291f07a755d09e08f6585650d7db75997cf2a96",
+      "input": "DERO"
+    },
+    {
+      "hex": "34ba703fb51601686640e7fca185dba7a04a1a50cc59a72e47a088e51e4a6786",
+      "input": "The quick brown fox"
+    }
+  ],
+  "points": [
+    {
+      "compressed": "02eacfbf92b94015c9b0b3d901dae37ec68f74dea7e4484c76d505aade4ad7c001",
+      "label": "G",
+      "marshal": "02eacfbf92b94015c9b0b3d901dae37ec68f74dea7e4484c76d505aade4ad7c01bb19d0d6bfcd78fc21da8d68dff1e8441cfa73d66cab25bb0315cf6d6433b5d"
+    },
+    {
+      "compressed": "268a955ce9d9444dbacc12db3dd1d51cca17ab9d6469c10899cd89c8665d25aa00",
+      "label": "H",
+      "marshal": "268a955ce9d9444dbacc12db3dd1d51cca17ab9d6469c10899cd89c8665d25aa11cebab1ef73d88df0ad543991b374b3067333a8b9fa415ab656fd8697e782f9"
+    },
+    {
+      "compressed": "08ed9cf63e34481c0c24351e71c0f119e1e182781fb14ead9756713b926be41200",
+      "label": "Gs[0]",
+      "marshal": "08ed9cf63e34481c0c24351e71c0f119e1e182781fb14ead9756713b926be4120fbd2393998b3b8952b8c0e2b79f378db29fbd72b9c71cfb84df07c083f4a724"
+    },
+    {
+      "compressed": "018800570697d31ef1ac7bfb36ecc94467fc93cef778f0fc0077acea2da94eec00",
+      "label": "Hs[0]",
+      "marshal": "018800570697d31ef1ac7bfb36ecc94467fc93cef778f0fc0077acea2da94eec13ccd50fc2f2ec5a1c51d20b26e54fdf3070d42b03a5fb0a2273c4e9e09bd5c7"
+    },
+    {
+      "compressed": "2f099b009e9d81b61ac63ae7faddad0d52b0fe102e1a9ae5ddb38a705e3c19fc00",
+      "label": "Gs[1]",
+      "marshal": "2f099b009e9d81b61ac63ae7faddad0d52b0fe102e1a9ae5ddb38a705e3c19fc13c21e74e7b1804d8a05356a18fc351e4d85956392adcd6e27781bfd1a9a7d44"
+    },
+    {
+      "compressed": "20f85793860c2a003e14eaab500da92a4f7e0e89bd378a639b00092f5dbbaf9101",
+      "label": "Hs[1]",
+      "marshal": "20f85793860c2a003e14eaab500da92a4f7e0e89bd378a639b00092f5dbbaf9120df46bd41b92d6953e430838a3c063daeffae6740b536d95794683682f43f69"
+    },
+    {
+      "compressed": "01e17e9ffc88393b53d7f0ab536e6782648661226db0b6bfa81be7c80b6b21a701",
+      "label": "Gs[2]",
+      "marshal": "01e17e9ffc88393b53d7f0ab536e6782648661226db0b6bfa81be7c80b6b21a71d51f46402fdc8ea16999c4075ce972405135f96cc5cc1b53b6a73c5d3d2fc04"
+    },
+    {
+      "compressed": "225bee9f132baa9a9ed38d552f200c34095094cf5e2cf3b3eb58ac3e77097f0101",
+      "label": "Hs[2]",
+      "marshal": "225bee9f132baa9a9ed38d552f200c34095094cf5e2cf3b3eb58ac3e77097f011874475e298bdc61135e779519aa58ebcf6d325f6d2ec8dcbf35eddeae459cf8"
+    },
+    {
+      "compressed": "2816539029288c82609e7e2270205e7f9f08b9de31d447f0e48cac7d9dbb8bb201",
+      "label": "Gs[63]",
+      "marshal": "2816539029288c82609e7e2270205e7f9f08b9de31d447f0e48cac7d9dbb8bb21c7c8507fc0023f43d927e0b4718ae315f2e24a94f53f63dd49fc6130b9f2d8b"
+    },
+    {
+      "compressed": "05ca7909b2685592d20d6fa8f083504ed77a72db717f844a6bf406633956547400",
+      "label": "Hs[63]",
+      "marshal": "05ca7909b2685592d20d6fa8f083504ed77a72db717f844a6bf40663395654740c1e7cfc9ce86b482ad13f8f76c49fa2e51fc884a94059b42ffcfc4ac0e6394b"
+    },
+    {
+      "compressed": "1a996ba54f1f7cf2b394ccb0d73dce96bb7b962c432ed9d87ccd8e5a4b49721601",
+      "label": "Gs[127]",
+      "marshal": "1a996ba54f1f7cf2b394ccb0d73dce96bb7b962c432ed9d87ccd8e5a4b4972161ec1b32b635139164d6fb9cae92b50404a3f750553c65568801a6dd903ea0890"
+    },
+    {
+      "compressed": "1ae383ab3129745a7e51a5d49a057dfa966dc341dff094c1fe7a3c4f57b330bd01",
+      "label": "Hs[127]",
+      "marshal": "1ae383ab3129745a7e51a5d49a057dfa966dc341dff094c1fe7a3c4f57b330bd2172c84e19c711e7275b7c76455cddbe775e0e5f0a4d8b380a0cbfc01c494856"
+    }
+  ],
+  "pubkeys": [
+    {
+      "compressed": "02eacfbf92b94015c9b0b3d901dae37ec68f74dea7e4484c76d505aade4ad7c001",
+      "secret": "1"
+    },
+    {
+      "compressed": "1723c9b5c0c573e9d202fea0243d5ffa5ca5e1adcfd50d0c0d53c48e1f190e0b00",
+      "secret": "2"
+    },
+    {
+      "compressed": "187768b7ba4478fd947490d31d6f10ce393c7429e1166f42a5bbc1d9a487a33600",
+      "secret": "3"
+    },
+    {
+      "compressed": "0372ee2dcfd41f4edef9e4ccecb9498988edf35db876759b4afb48341c70829701",
+      "secret": "7"
+    },
+    {
+      "compressed": "0a320f08ac6f3b6a679cc51588e41d3246fa3386d6e8cb480c1f72a5c975a6c601",
+      "secret": "42"
+    },
+    {
+      "compressed": "0a4f5207b1f677dea26659a0787d90e4ecf18465af793615e12c11708aa1925f01",
+      "secret": "255"
+    },
+    {
+      "compressed": "1eedc6cf614613cc297222e44ee56d71d05d6799c2252b18a27c21317b742a1800",
+      "secret": "65537"
+    },
+    {
+      "compressed": "2188003d0f1b1ac829dc98f254d7e4c5ec97f0e13f03341a3050935140b4b1df00",
+      "secret": "123456789012345678901234567890"
+    },
+    {
+      "compressed": "17b180b80d9984fcb4915bb27136776d958f774cf3976464c3cee22a550a716c01",
+      "secret": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "compressed": "0fca379a002f96a467e297349cca040077f74bc50e27c8a737ff5386b71f303001",
+      "secret": "16798108731015832284940804142231733909759579603404752749028378864165570215948"
+    }
+  ]
+}

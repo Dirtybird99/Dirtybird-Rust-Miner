@@ -1,0 +1,203 @@
+{
+  "build": [
+    {
+      "name": "e_expiry",
+      "args": [
+        {
+          "name": "E",
+          "type": "T",
+          "unix": 1893456000
+        },
+        {
+          "name": "D",
+          "type": "U",
+          "u": 4660
+        },
+        {
+          "name": "C",
+          "s": "dero",
+          "type": "S"
+        }
+      ],
+      "marshal_hex": "a3624353646465726f624455191234624554c11a70dbd880",
+      "marshal_err": "",
+      "roundtrip_hex": "a3624353646465726f624455191234624554c11a70dbd880",
+      "unmarshal_err": ""
+    },
+    {
+      "name": "t_zero",
+      "args": [
+        {
+          "name": "t",
+          "type": "T",
+          "unix": -62135596800
+        }
+      ],
+      "marshal_hex": "a1627454f6",
+      "marshal_err": "",
+      "roundtrip_hex": "",
+      "unmarshal_err": "Name:t Type:time Value:'%!s(\u003cnil\u003e)' has invalid data type \u003cnil\u003e\n"
+    },
+    {
+      "name": "f_pi",
+      "args": [
+        {
+          "f64_bits": "400921fb54442d18",
+          "name": "f",
+          "type": "F"
+        }
+      ],
+      "marshal_hex": "a1626646fb400921fb54442d18",
+      "marshal_err": "",
+      "roundtrip_hex": "a1626646fb400921fb54442d18",
+      "unmarshal_err": ""
+    },
+    {
+      "name": "f_zero",
+      "args": [
+        {
+          "f64_bits": "0000000000000000",
+          "name": "f",
+          "type": "F"
+        }
+      ],
+      "marshal_hex": "a1626646f90000",
+      "marshal_err": "",
+      "roundtrip_hex": "a1626646f90000",
+      "unmarshal_err": ""
+    },
+    {
+      "name": "f_neg",
+      "args": [
+        {
+          "f64_bits": "c0934a0000000000",
+          "name": "f",
+          "type": "F"
+        }
+      ],
+      "marshal_hex": "a1626646fac49a5000",
+      "marshal_err": "",
+      "roundtrip_hex": "a1626646fac49a5000",
+      "unmarshal_err": ""
+    },
+    {
+      "name": "f_small",
+      "args": [
+        {
+          "f64_bits": "3e70000000000000",
+          "name": "f",
+          "type": "F"
+        }
+      ],
+      "marshal_hex": "a1626646f90001",
+      "marshal_err": "",
+      "roundtrip_hex": "a1626646f90001",
+      "unmarshal_err": ""
+    },
+    {
+      "name": "t_epoch",
+      "args": [
+        {
+          "name": "t",
+          "type": "T",
+          "unix": 1700000000
+        }
+      ],
+      "marshal_hex": "a1627454c11a6553f100",
+      "marshal_err": "",
+      "roundtrip_hex": "a1627454c11a6553f100",
+      "unmarshal_err": ""
+    },
+    {
+      "name": "mixed_ft",
+      "args": [
+        {
+          "f64_bits": "4004000000000000",
+          "name": "f",
+          "type": "F"
+        },
+        {
+          "name": "t",
+          "type": "T",
+          "unix": 0
+        },
+        {
+          "name": "u",
+          "type": "U",
+          "u": 9
+        }
+      ],
+      "marshal_hex": "a3626646f94100627454c10062755509",
+      "marshal_err": "",
+      "roundtrip_hex": "a3626646f94100627454c10062755509",
+      "unmarshal_err": ""
+    }
+  ],
+  "go_zero_time_unix": -62135596800,
+  "raw": [
+    {
+      "name": "raw_f_nan",
+      "raw_hex": "a1626646f97e00",
+      "unmarshal_err": "",
+      "remarshal_hex": "a1626646f97e00",
+      "decoded": [
+        {
+          "name": "f",
+          "type": "F",
+          "f64_bits": "7ff8000000000000"
+        }
+      ]
+    },
+    {
+      "name": "raw_f_inf",
+      "raw_hex": "a1626646f97c00",
+      "unmarshal_err": "",
+      "remarshal_hex": "a1626646f97c00",
+      "decoded": [
+        {
+          "name": "f",
+          "type": "F",
+          "f64_bits": "7ff0000000000000"
+        }
+      ]
+    },
+    {
+      "name": "raw_f_ninf",
+      "raw_hex": "a1626646f9fc00",
+      "unmarshal_err": "",
+      "remarshal_hex": "a1626646f9fc00",
+      "decoded": [
+        {
+          "name": "f",
+          "type": "F",
+          "f64_bits": "fff0000000000000"
+        }
+      ]
+    },
+    {
+      "name": "raw_t_epoch",
+      "raw_hex": "a1627454c11a499602d2",
+      "unmarshal_err": "",
+      "remarshal_hex": "a1627454c11a499602d2",
+      "decoded": [
+        {
+          "name": "t",
+          "type": "T",
+          "unix": 1234567890
+        }
+      ]
+    },
+    {
+      "name": "raw_truncated",
+      "raw_hex": "a1",
+      "unmarshal_err": "unexpected EOF",
+      "remarshal_hex": ""
+    },
+    {
+      "name": "raw_bad_key_len",
+      "raw_hex": "a16149181e",
+      "unmarshal_err": "Invalid encoding for key 'I'",
+      "remarshal_hex": ""
+    }
+  ]
+}

@@ -1,0 +1,1122 @@
+{
+  "cases": [
+    {
+      "args": [
+        {
+          "name": "aa",
+          "type": "U",
+          "u": 0
+        }
+      ],
+      "input_hex": "a16361615500",
+      "name": "valid_0",
+      "ok": true,
+      "remarshal_hex": "a16361615500"
+    },
+    {
+      "args": [
+        {
+          "name": "bb",
+          "type": "U",
+          "u": 300
+        }
+      ],
+      "input_hex": "a16362625519012c",
+      "name": "valid_1",
+      "ok": true,
+      "remarshal_hex": "a16362625519012c"
+    },
+    {
+      "args": [
+        {
+          "name": "cc",
+          "type": "U",
+          "u": 18446744073709551615
+        }
+      ],
+      "input_hex": "a1636363551bffffffffffffffff",
+      "name": "valid_2",
+      "ok": true,
+      "remarshal_hex": "a1636363551bffffffffffffffff"
+    },
+    {
+      "args": [
+        {
+          "i": -1,
+          "name": "dd",
+          "type": "I"
+        }
+      ],
+      "input_hex": "a16364644920",
+      "name": "valid_3",
+      "ok": true,
+      "remarshal_hex": "a16364644920"
+    },
+    {
+      "args": [
+        {
+          "i": -100000,
+          "name": "ee",
+          "type": "I"
+        }
+      ],
+      "input_hex": "a1636565493a0001869f",
+      "name": "valid_4",
+      "ok": true,
+      "remarshal_hex": "a1636565493a0001869f"
+    },
+    {
+      "args": [
+        {
+          "name": "ff",
+          "s": "hello",
+          "type": "S"
+        }
+      ],
+      "input_hex": "a1636666536568656c6c6f",
+      "name": "valid_5",
+      "ok": true,
+      "remarshal_hex": "a1636666536568656c6c6f"
+    },
+    {
+      "args": [
+        {
+          "name": "gg",
+          "s": "",
+          "type": "S"
+        }
+      ],
+      "input_hex": "a16367675360",
+      "name": "valid_6",
+      "ok": true,
+      "remarshal_hex": "a16367675360"
+    },
+    {
+      "args": [
+        {
+          "hex": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+          "name": "hh",
+          "type": "H"
+        }
+      ],
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "name": "valid_7",
+      "ok": true,
+      "remarshal_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+    },
+    {
+      "args": [
+        {
+          "hex": "2b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909ac7b834b00",
+          "name": "ii",
+          "type": "A"
+        }
+      ],
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909ac7b834b00",
+      "name": "valid_8",
+      "ok": true,
+      "remarshal_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909ac7b834b00"
+    },
+    {
+      "args": [
+        {
+          "f64_bits": "40091eb851eb851f",
+          "name": "jj",
+          "type": "F"
+        }
+      ],
+      "input_hex": "a1636a6a46fb40091eb851eb851f",
+      "name": "valid_9",
+      "ok": true,
+      "remarshal_hex": "a1636a6a46fb40091eb851eb851f"
+    },
+    {
+      "args": [
+        {
+          "name": "kk",
+          "type": "T",
+          "unix": 1700000000
+        }
+      ],
+      "input_hex": "a1636b6b54c11a6553f100",
+      "name": "valid_10",
+      "ok": true,
+      "remarshal_hex": "a1636b6b54c11a6553f100"
+    },
+    {
+      "args": [
+        {
+          "name": "C",
+          "s": "x",
+          "type": "S"
+        },
+        {
+          "name": "D",
+          "type": "U",
+          "u": 1
+        }
+      ],
+      "input_hex": "a2624353617862445501",
+      "name": "valid_11",
+      "ok": true,
+      "remarshal_hex": "a2624353617862445501"
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1",
+      "name": "trunc_0_1",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163",
+      "name": "trunc_0_2",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16361",
+      "name": "trunc_0_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636161",
+      "name": "trunc_0_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163616155",
+      "name": "trunc_0_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16362",
+      "name": "trunc_1_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636262",
+      "name": "trunc_1_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163626255",
+      "name": "trunc_1_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16362625519",
+      "name": "trunc_1_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636262551901",
+      "name": "trunc_1_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16363",
+      "name": "trunc_2_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363",
+      "name": "trunc_2_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163636355",
+      "name": "trunc_2_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551b",
+      "name": "trunc_2_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551bff",
+      "name": "trunc_2_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551bffff",
+      "name": "trunc_2_8",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551bffffff",
+      "name": "trunc_2_9",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551bffffffff",
+      "name": "trunc_2_10",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551bffffffffff",
+      "name": "trunc_2_11",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551bffffffffffff",
+      "name": "trunc_2_12",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636363551bffffffffffffff",
+      "name": "trunc_2_13",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16364",
+      "name": "trunc_3_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636464",
+      "name": "trunc_3_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163646449",
+      "name": "trunc_3_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16365",
+      "name": "trunc_4_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636565",
+      "name": "trunc_4_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163656549",
+      "name": "trunc_4_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636565493a",
+      "name": "trunc_4_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636565493a00",
+      "name": "trunc_4_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636565493a0001",
+      "name": "trunc_4_8",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636565493a000186",
+      "name": "trunc_4_9",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16366",
+      "name": "trunc_5_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636666",
+      "name": "trunc_5_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163666653",
+      "name": "trunc_5_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16366665365",
+      "name": "trunc_5_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636666536568",
+      "name": "trunc_5_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163666653656865",
+      "name": "trunc_5_8",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636666536568656c",
+      "name": "trunc_5_9",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636666536568656c6c",
+      "name": "trunc_5_10",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16367",
+      "name": "trunc_6_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636767",
+      "name": "trunc_6_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163676753",
+      "name": "trunc_6_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16368",
+      "name": "trunc_7_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636868",
+      "name": "trunc_7_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848",
+      "name": "trunc_7_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16368684858",
+      "name": "trunc_7_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636868485820",
+      "name": "trunc_7_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000",
+      "name": "trunc_7_8",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16368684858200011",
+      "name": "trunc_7_9",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636868485820001122",
+      "name": "trunc_7_10",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233",
+      "name": "trunc_7_11",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16368684858200011223344",
+      "name": "trunc_7_12",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636868485820001122334455",
+      "name": "trunc_7_13",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566",
+      "name": "trunc_7_14",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16368684858200011223344556677",
+      "name": "trunc_7_15",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636868485820001122334455667788",
+      "name": "trunc_7_16",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899",
+      "name": "trunc_7_17",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aa",
+      "name": "trunc_7_18",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabb",
+      "name": "trunc_7_19",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbcc",
+      "name": "trunc_7_20",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccdd",
+      "name": "trunc_7_21",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddee",
+      "name": "trunc_7_22",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff",
+      "name": "trunc_7_23",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00",
+      "name": "trunc_7_24",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff0011",
+      "name": "trunc_7_25",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff001122",
+      "name": "trunc_7_26",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233",
+      "name": "trunc_7_27",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff0011223344",
+      "name": "trunc_7_28",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff001122334455",
+      "name": "trunc_7_29",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566",
+      "name": "trunc_7_30",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff0011223344556677",
+      "name": "trunc_7_31",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff001122334455667788",
+      "name": "trunc_7_32",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899",
+      "name": "trunc_7_33",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899aa",
+      "name": "trunc_7_34",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899aabb",
+      "name": "trunc_7_35",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899aabbcc",
+      "name": "trunc_7_36",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899aabbccdd",
+      "name": "trunc_7_37",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163686848582000112233445566778899aabbccddeeff00112233445566778899aabbccddee",
+      "name": "trunc_7_38",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369",
+      "name": "trunc_8_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636969",
+      "name": "trunc_8_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a163696941",
+      "name": "trunc_8_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158",
+      "name": "trunc_8_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636969415821",
+      "name": "trunc_8_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b",
+      "name": "trunc_8_8",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e",
+      "name": "trunc_8_9",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10",
+      "name": "trunc_8_10",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce",
+      "name": "trunc_8_11",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38",
+      "name": "trunc_8_12",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d7",
+      "name": "trunc_8_13",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79b",
+      "name": "trunc_8_14",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba6",
+      "name": "trunc_8_15",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a",
+      "name": "trunc_8_16",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53",
+      "name": "trunc_8_17",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b8",
+      "name": "trunc_8_18",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80f",
+      "name": "trunc_8_19",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe8",
+      "name": "trunc_8_20",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819",
+      "name": "trunc_8_21",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb",
+      "name": "trunc_8_22",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d",
+      "name": "trunc_8_23",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3d",
+      "name": "trunc_8_24",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd",
+      "name": "trunc_8_25",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e",
+      "name": "trunc_8_26",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38",
+      "name": "trunc_8_27",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d0",
+      "name": "trunc_8_28",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092",
+      "name": "trunc_8_29",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc",
+      "name": "trunc_8_30",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96",
+      "name": "trunc_8_31",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af",
+      "name": "trunc_8_32",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af63",
+      "name": "trunc_8_33",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af6329",
+      "name": "trunc_8_34",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909",
+      "name": "trunc_8_35",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909ac",
+      "name": "trunc_8_36",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909ac7b",
+      "name": "trunc_8_37",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909ac7b83",
+      "name": "trunc_8_38",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a16369694158212b4e10ce38d79ba60a53b80fe819bb2d3dcd4e38d092cc96af632909ac7b834b",
+      "name": "trunc_8_39",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a",
+      "name": "trunc_9_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a",
+      "name": "trunc_9_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46",
+      "name": "trunc_9_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb",
+      "name": "trunc_9_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb40",
+      "name": "trunc_9_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb4009",
+      "name": "trunc_9_8",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb40091e",
+      "name": "trunc_9_9",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb40091eb8",
+      "name": "trunc_9_10",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb40091eb851",
+      "name": "trunc_9_11",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb40091eb851eb",
+      "name": "trunc_9_12",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636a6a46fb40091eb851eb85",
+      "name": "trunc_9_13",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b",
+      "name": "trunc_10_3",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b6b",
+      "name": "trunc_10_4",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b6b54",
+      "name": "trunc_10_5",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b6b54c1",
+      "name": "trunc_10_6",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b6b54c11a",
+      "name": "trunc_10_7",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b6b54c11a65",
+      "name": "trunc_10_8",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b6b54c11a6553",
+      "name": "trunc_10_9",
+      "ok": false
+    },
+    {
+      "error": "unexpected EOF",
+      "input_hex": "a1636b6b54c11a6553f1",
+      "name": "trunc_10_10",
+      "ok": false
+    },
+    {
+      "error": "Name:a Type:uint64 Value:'%!d(\u003cnil\u003e)' has invalid data type string\n",
+      "input_hex": "a1626155626e6f",
+      "name": "wrongtype_U_str",
+      "ok": false
+    },
+    {
+      "error": "Name:b Type:int64 Value:'%!d(\u003cnil\u003e)' has invalid data typei string\n",
+      "input_hex": "a1626249626e6f",
+      "name": "wrongtype_I_str",
+      "ok": false
+    },
+    {
+      "error": "Name:c Type:float64 Value:'%!f(\u003cnil\u003e)' has invalid data type string\n",
+      "input_hex": "a1626346626e6f",
+      "name": "wrongtype_F_str",
+      "ok": false
+    },
+    {
+      "error": "Name:d Type:hash Value:'%!s(\u003cnil\u003e)' has invalid data type uint64\n",
+      "input_hex": "a16264480a",
+      "name": "wrongtype_H_int",
+      "ok": false
+    },
+    {
+      "error": "Name:e Type:address Value:'%!s(\u003cnil\u003e)' has invalid data type uint64\n",
+      "input_hex": "a16265410a",
+      "name": "wrongtype_A_int",
+      "ok": false
+    },
+    {
+      "error": "Name:f Type:uint64 Value:'%!d(\u003cnil\u003e)' has invalid data type []uint8\n",
+      "input_hex": "a1626655420102",
+      "name": "wrongtype_U_bytes",
+      "ok": false
+    },
+    {
+      "args": [
+        {
+          "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+          "name": "g",
+          "type": "H"
+        }
+      ],
+      "input_hex": "a1626748581f00000000000000000000000000000000000000000000000000000000000000",
+      "name": "H_len31",
+      "ok": true,
+      "remarshal_hex": "a162674858200000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "args": [
+        {
+          "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+          "name": "h",
+          "type": "H"
+        }
+      ],
+      "input_hex": "a16268485821000000000000000000000000000000000000000000000000000000000000000000",
+      "name": "H_len33",
+      "ok": true,
+      "remarshal_hex": "a162684858200000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "error": "bn256: Cannot decompress",
+      "input_hex": "a162694158200000000000000000000000000000000000000000000000000000000000000000",
+      "name": "A_len32",
+      "ok": false
+    },
+    {
+      "error": "bn256: Cannot decompress",
+      "input_hex": "a1626a41582200000000000000000000000000000000000000000000000000000000000000000000",
+      "name": "A_len34",
+      "ok": false
+    },
+    {
+      "error": "bn256: Cannot decompress",
+      "input_hex": "a1626b415821000000000000000000000000000000000000000000000000000000000000000000",
+      "name": "A_zeros33",
+      "ok": false
+    },
+    {
+      "error": "Invalid encoding for key 'U'",
+      "input_hex": "a161551818",
+      "name": "one_char_key",
+      "ok": false
+    },
+    {
+      "error": "Invalid encoding for key ''",
+      "input_hex": "a16001",
+      "name": "empty_key",
+      "ok": false
+    },
+    {
+      "error": "I don't know about typeaa uint64  xZ!\n",
+      "input_hex": "a162785a01",
+      "name": "unknown_type_tag",
+      "ok": false
+    },
+    {
+      "error": "cbor: cannot unmarshal positive integer into Go value of type map[string]interface {}",
+      "input_hex": "182a",
+      "name": "top_uint",
+      "ok": false
+    },
+    {
+      "error": "cbor: cannot unmarshal negative integer into Go value of type map[string]interface {}",
+      "input_hex": "20",
+      "name": "top_negint",
+      "ok": false
+    },
+    {
+      "error": "cbor: cannot unmarshal array into Go value of type map[string]interface {}",
+      "input_hex": "820102",
+      "name": "top_array",
+      "ok": false
+    },
+    {
+      "error": "cbor: cannot unmarshal UTF-8 text string into Go value of type map[string]interface {}",
+      "input_hex": "626869",
+      "name": "top_text",
+      "ok": false
+    },
+    {
+      "error": "cbor: cannot unmarshal byte string into Go value of type map[string]interface {}",
+      "input_hex": "43010203",
+      "name": "top_bytes",
+      "ok": false
+    },
+    {
+      "args": [],
+      "input_hex": "a0",
+      "name": "empty_map",
+      "ok": true,
+      "remarshal_hex": "a0"
+    },
+    {
+      "args": [
+        {
+          "name": "a",
+          "type": "U",
+          "u": 1
+        },
+        {
+          "name": "b",
+          "s": "x",
+          "type": "S"
+        }
+      ],
+      "input_hex": "a2626155016262536178",
+      "name": "two_valid",
+      "ok": true,
+      "remarshal_hex": "a2626155016262536178"
+    }
+  ]
+}
