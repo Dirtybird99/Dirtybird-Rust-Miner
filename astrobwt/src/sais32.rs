@@ -290,9 +290,12 @@ pub(crate) fn suffix_array_v114_into(
         return true;
     }
 
-    let Some(logical_len_u32) = u32::try_from(logical_len).ok() else {
+    // Refusal checks, kept even though the Rust backend no longer needs the
+    // bound values: dropping them would change WHICH inputs fall back to
+    // libsais. Both backends must refuse the same set.
+    if u32::try_from(logical_len).is_err() {
         return false;
-    };
+    }
     let Some(data_len_with_tail) = logical_len.checked_add(3) else {
         return false;
     };
@@ -303,9 +306,12 @@ pub(crate) fn suffix_array_v114_into(
     let Some(flag_len) = build_v114_stage5_flags(markers, logical_len, flags) else {
         return false;
     };
-    let Some(out_cap) = logical_len.checked_mul(std::mem::size_of::<i32>()) else {
+    if logical_len
+        .checked_mul(std::mem::size_of::<i32>())
+        .is_none()
+    {
         return false;
-    };
+    }
     sa.resize(logical_len, 0);
 
     if !use_cpp_backend() {
@@ -382,7 +388,9 @@ pub(crate) fn hash_v114_fused_into(
     if logical_len == 0 {
         return None;
     }
-    let logical_len_u32 = u32::try_from(logical_len).ok()?;
+    // Refusal checks; see `suffix_array_v114_into` — the bound values are unused
+    // on the Rust path but the checks decide which inputs fall back to libsais.
+    u32::try_from(logical_len).ok()?;
     let data_len_with_tail = logical_len.checked_add(3)?;
     if data_with_tail.len() < data_len_with_tail {
         return None;

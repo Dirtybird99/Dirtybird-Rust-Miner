@@ -71,6 +71,55 @@ memory-bandwidth liability at saturation (two in-flight nonces double the per-th
 footprint on a bandwidth-bound box). This miner's single fused path + cross-language LTO scales
 better at peak.
 
+## Pure-Rust descriptor SA vs the vendored C++ (2026-07-10)
+
+The v1.14 descriptor suffix array — ~88% of a hash — was ported from the vendored C++
+(`astrobwt/vendor/v114/v114_stubs.cpp`, 2,400 lines) to pure Rust
+(`astrobwt/src/v114.rs`, `#![forbid(unsafe_code)]`). Both backends ship in one binary;
+`DERO_V114_CPP=1` selects the C++.
+
+Measured with [`v114_ab.ps1`](v114_ab.ps1) — same binary, one backend per run, alternating
+order, HIGH priority, 30 s sustained window, 24 threads, unpinned. **Plain `release` build**
+(not the dual-PGO + cross-language-LTO build that produces the 22.3 KH/s figure above), so
+the absolute numbers are lower; only the *delta* is meaningful here.
+
+| round | RUST | CPP | delta | winner |
+|---|---|---|---|---|
+| 1 | 18.66 | 18.42 | +1.30% | RUST |
+| 2 | 18.18 | 18.21 | −0.16% | CPP |
+| 3 | 18.38 | 18.00 | +2.11% | RUST |
+| 4 | 18.50 | 18.41 | +0.49% | RUST |
+| 5 | 18.46 | 18.43 | +0.16% | RUST |
+| 6 | 18.62 | 18.33 | +1.58% | RUST |
+| **avg** | **18.47** | **18.30** | **+0.91%** | **5 W / 1 L / 0 T** |
+
+**Verdict: parity, leaning ahead.** The sign test over the 6 decided rounds gives
+p ≈ 0.22 — *not* significant, so this is **not** a claimed win. The honest reading is that
+the Rust backend is indistinguishable from the C++ at saturation, on the right side of the
+line. Single-thread `sa_bench` is a dead heat (1458 vs 1457 H/s).
+
+Correctness is byte-exact, not merely "passes tests": the Rust SA, the C++ SA, and libsais
+agree element-for-element; the fused hash equals `sha256(materialized SA)`; and both
+backends **refuse the same inputs** (refusal drift would silently change how often the
+libsais fallback runs). Verified over the 532-case `v114_golden.json` fixture (frozen from
+the C++ before the port), 20,000 differential fuzz cases, and miner-sized 255-byte inputs.
+
+### Two regressions the port introduced, and what they cost
+
+A first, naively faithful cut was **+4.6% single-thread but −3.4% at 24 threads** — the
+signature of extra memory traffic, not a worse algorithm:
+
+- `radix_sort_runs_by_stored_key` and `merge_equal_key_runs_after_key` called `clear()`
+  before `resize()`, re-zeroing the whole reused scratch buffer every hash. The C++ resizes
+  only, because every slot is written before it is read.
+- `keys` was a `[0u32; 512]` stack array — 2 KiB zeroed per group-run call. The C++ leaves
+  that array uninitialized; Rust cannot without `unsafe`, so it moved into the reused
+  thread-local scratch.
+
+Both are *faithfulness* bugs as much as perf bugs: the C++ did neither. Removing them
+restored parity. Worth remembering — "port it literally" and "port its memory behavior"
+are not the same thing.
+
 ## Not claimed here
 
 - A previously-measured **+6% at 16T** (via P-core pinning) is **not** re-verified against the
