@@ -354,7 +354,9 @@ fn radix_sort_runs_by_stored_key(runs: &mut Vec<Stage5Run>, tmp: &mut Vec<Stage5
     if n <= 1 {
         return;
     }
-    tmp.clear();
+    // `resize` alone, exactly as the C++ (l.975): pass 0 writes every slot, so
+    // pre-zeroing is pure overhead. A `clear()` first would re-zero the whole
+    // reused buffer on every hash.
     tmp.resize(n, Stage5Run::default());
 
     let mut counts0 = [0u32; 256];
@@ -467,7 +469,9 @@ fn merge_equal_key_runs_after_key(
         return;
     }
 
-    merge_positions.clear();
+    // `resize` alone, exactly as the C++ (l.1075): every slot the merge reads is
+    // written first. A `clear()` first would re-zero the whole reused buffer on
+    // every equal-key fallback group.
     merge_positions.resize(positions.len(), 0);
 
     let mut flipped = false;
@@ -526,9 +530,16 @@ fn merge_equal_key_runs_after_key(
 // ===========================================================================
 
 /// C++ `FusedStage5Scratch` (l.924), minus the profiling members.
+///
+/// `keys` is not a C++ member: there it is a stack array (`uint32_t
+/// keys[kStage4MaxGroupCount]`, l.1449) left deliberately uninitialized. Rust
+/// has no uninitialized stack array without `unsafe`, and a `[0u32; 512]`
+/// literal would zero 2 KiB on every group-run call, so it joins the reused
+/// scratch instead — grown once, then only ever written before read.
 #[derive(Default)]
 struct FusedScratch {
     order: Vec<u32>,
+    keys: Vec<u32>,
     arena_positions: Vec<u32>,
     group_positions: Vec<u32>,
     merge_positions: Vec<u32>,
@@ -536,6 +547,15 @@ struct FusedScratch {
     next_run_lengths: Vec<u32>,
     runs: Vec<Stage5Run>,
     radix_tmp: Vec<Stage5Run>,
+}
+
+/// The four buffers the Stage-4 emit walk touches, borrowed as disjoint fields
+/// so `order`/`keys` and `runs`/`arena` can be held mutably at once.
+struct Emit<'a> {
+    runs: &'a mut Vec<Stage5Run>,
+    arena: &'a mut Vec<u32>,
+    order: &'a mut Vec<u32>,
+    keys: &'a mut Vec<u32>,
 }
 
 thread_local! {
@@ -578,7 +598,7 @@ fn emit_fused_literal_records(
     view: &Stage4View,
     start: u32,
     count: u32,
-    scratch: &mut FusedScratch,
+    emit: &mut Emit,
     count1_singletons: bool,
 ) -> bool {
     let padded = has_load24_padding(view);
@@ -586,8 +606,8 @@ fn emit_fused_literal_records(
         let pos = start + rel;
         let one = [pos];
         if !append_fused_order_group(
-            &mut scratch.runs,
-            &mut scratch.arena_positions,
+            emit.runs,
+            emit.arena,
             load24_fast(view, pos, padded),
             &one,
             0,
@@ -605,7 +625,7 @@ fn emit_fused_literal_records(
 fn emit_fused_two(
     view: &Stage4View,
     start_group: u32,
-    scratch: &mut FusedScratch,
+    emit: &mut Emit,
     count1_singletons: bool,
 ) -> bool {
     let padded = has_load24_padding(view);
@@ -620,8 +640,8 @@ fn emit_fused_two(
         let key1 = load24_fast(view, order[1], padded);
         if key0 == key1 {
             if !append_fused_order_group(
-                &mut scratch.runs,
-                &mut scratch.arena_positions,
+                emit.runs,
+                emit.arena,
                 key0,
                 &order,
                 0,
@@ -630,26 +650,24 @@ fn emit_fused_two(
             ) {
                 return false;
             }
-        } else {
-            if !append_fused_order_group(
-                &mut scratch.runs,
-                &mut scratch.arena_positions,
-                key0,
-                &order,
-                0,
-                1,
-                count1_singletons,
-            ) || !append_fused_order_group(
-                &mut scratch.runs,
-                &mut scratch.arena_positions,
-                key1,
-                &order,
-                1,
-                1,
-                count1_singletons,
-            ) {
-                return false;
-            }
+        } else if !append_fused_order_group(
+            emit.runs,
+            emit.arena,
+            key0,
+            &order,
+            0,
+            1,
+            count1_singletons,
+        ) || !append_fused_order_group(
+            emit.runs,
+            emit.arena,
+            key1,
+            &order,
+            1,
+            1,
+            count1_singletons,
+        ) {
+            return false;
         }
 
         if rel > 0 {
@@ -664,35 +682,48 @@ fn emit_fused_two(
     true
 }
 
-/// C++ `emit_full_group_run_compact_fused_fixed<N>` (l.1287) and
-/// `..._fused_short` (l.1346) share one body over a `&mut [u32]` order buffer;
-/// the C++ split them only to get compile-time array sizes.
+/// The 256-step scan shared by C++ `emit_full_group_run_compact_fused_fixed<N>`
+/// (l.1287), `..._fused_short` (l.1346), and the general arm of
+/// `..._compact_fused` (l.1450). The C++ split them only to get compile-time
+/// array sizes; `order[..n]` / `keys[..n]` carry that here.
+///
+/// `order` must already hold the `n` seed positions; this sorts them.
 fn emit_fused_group_scan(
     view: &Stage4View,
-    order: &mut [u32],
-    keys: &mut [u32],
-    scratch: &mut FusedScratch,
+    n: usize,
+    presorted: bool,
+    emit: &mut Emit,
     count1_singletons: bool,
 ) -> bool {
     let padded = has_load24_padding(view);
-    let group_count = order.len();
-    sort_stage4_suffix_order_small(view, order);
+    let Emit {
+        runs,
+        arena,
+        order,
+        keys,
+    } = emit;
+    let order = &mut order[..n];
+    let keys = &mut keys[..n];
+
+    if !presorted {
+        sort_stage4_suffix_order_small(view, order);
+    }
 
     for rel in (0..=255u32).rev() {
-        for i in 0..group_count {
+        for i in 0..n {
             keys[i] = load24_fast(view, order[i], padded);
         }
 
         let mut group_start = 0usize;
-        while group_start < group_count {
+        while group_start < n {
             let key = keys[group_start];
             let mut group_end = group_start + 1;
-            while group_end < group_count && keys[group_end] == key {
+            while group_end < n && keys[group_end] == key {
                 group_end += 1;
             }
             if !append_fused_order_group(
-                &mut scratch.runs,
-                &mut scratch.arena_positions,
+                runs,
+                arena,
                 key,
                 order,
                 group_start,
@@ -712,12 +743,25 @@ fn emit_fused_group_scan(
     true
 }
 
-/// C++ `emit_full_group_run_compact_fused_short` (l.1346).
+/// Seed `emit.order[..n]` with the run's per-group anchor positions
+/// (C++ `order[chunk] = base + (chunk << 8) + 255u`) and size `emit.keys`.
+/// `resize` only grows the reused buffers; it never re-zeros live elements.
+fn seed_order(emit: &mut Emit, base: u32, n: usize) {
+    emit.order.clear();
+    emit.order
+        .extend((0..n as u32).map(|chunk| base + (chunk << 8) + 255));
+    if emit.keys.len() < n {
+        emit.keys.resize(n, 0);
+    }
+}
+
+/// C++ `emit_full_group_run_compact_fused_short` (l.1346). The C++'s
+/// `_fused_fixed<3>` / `<4>` specializations fold into the same scan.
 fn emit_fused_short(
     view: &Stage4View,
     start_group: u32,
     end_group: u32,
-    scratch: &mut FusedScratch,
+    emit: &mut Emit,
     count1_singletons: bool,
 ) -> bool {
     let group_count = end_group - start_group;
@@ -725,23 +769,12 @@ fn emit_fused_short(
         return false;
     }
     if group_count == 2 {
-        return emit_fused_two(view, start_group, scratch, count1_singletons);
+        return emit_fused_two(view, start_group, emit, count1_singletons);
     }
 
-    let base = start_group << 8;
     let n = group_count as usize;
-    let mut order = [0u32; STAGE4_SHORT_RUN_MAX as usize];
-    let mut keys = [0u32; STAGE4_SHORT_RUN_MAX as usize];
-    for (chunk, slot) in order[..n].iter_mut().enumerate() {
-        *slot = base + ((chunk as u32) << 8) + 255;
-    }
-    emit_fused_group_scan(
-        view,
-        &mut order[..n],
-        &mut keys[..n],
-        scratch,
-        count1_singletons,
-    )
+    seed_order(emit, start_group << 8, n);
+    emit_fused_group_scan(view, n, false, emit, count1_singletons)
 }
 
 /// C++ `emit_full_group_run_compact_fused` (l.1418): the run dispatcher.
@@ -749,7 +782,7 @@ fn emit_fused_full_group_run(
     view: &Stage4View,
     start_group: u32,
     end_group: u32,
-    scratch: &mut FusedScratch,
+    emit: &mut Emit,
     count1_singletons: bool,
 ) -> bool {
     let group_count = end_group - start_group;
@@ -762,59 +795,21 @@ fn emit_fused_full_group_run(
 
     let base = start_group << 8;
     if group_count == 1 {
-        return emit_fused_literal_records(view, base, 256, scratch, count1_singletons);
+        return emit_fused_literal_records(view, base, 256, emit, count1_singletons);
     }
     if group_count <= STAGE4_SHORT_RUN_MAX {
-        return emit_fused_short(view, start_group, end_group, scratch, count1_singletons);
+        return emit_fused_short(view, start_group, end_group, emit, count1_singletons);
     }
 
-    // General path: `std::sort` by full suffix order, then the same 256-step
-    // scan. `sort_unstable_by` matches `std::sort`: both are unspecified-order
-    // for equal elements, and no two positions compare equal here (distinct
-    // suffixes of one string).
-    let padded = has_load24_padding(view);
+    // General path (C++ l.1438-1447): `std::sort` by full suffix order rather
+    // than the short path's insertion sort, then the identical 256-step scan.
+    // `sort_unstable_by` matches `std::sort`: both leave equal elements in
+    // unspecified order, and no two positions compare equal here (they are
+    // distinct suffixes of one string, so the comparator is a total order).
     let n = group_count as usize;
-    let mut order = std::mem::take(&mut scratch.order);
-    order.clear();
-    order.extend((0..group_count).map(|chunk| base + (chunk << 8) + 255));
-    order.sort_unstable_by(|&a, &b| compare_suffixes_s4(view, a, b));
-
-    let mut keys = [0u32; STAGE4_MAX_GROUP_COUNT as usize];
-    let mut ok = true;
-    'outer: for rel in (0..=255u32).rev() {
-        for i in 0..n {
-            keys[i] = load24_fast(view, order[i], padded);
-        }
-
-        let mut group_start = 0usize;
-        while group_start < n {
-            let key = keys[group_start];
-            let mut group_end = group_start + 1;
-            while group_end < n && keys[group_end] == key {
-                group_end += 1;
-            }
-            if !append_fused_order_group(
-                &mut scratch.runs,
-                &mut scratch.arena_positions,
-                key,
-                &order,
-                group_start,
-                (group_end - group_start) as u32,
-                count1_singletons,
-            ) {
-                ok = false;
-                break 'outer;
-            }
-            group_start = group_end;
-        }
-
-        if rel > 0 {
-            step_back_and_reorder(view.data, &mut order);
-        }
-    }
-
-    scratch.order = order;
-    ok
+    seed_order(emit, base, n);
+    emit.order[..n].sort_unstable_by(|&a, &b| compare_suffixes_s4(view, a, b));
+    emit_fused_group_scan(view, n, true, emit, count1_singletons)
 }
 
 // ===========================================================================
@@ -1203,11 +1198,25 @@ fn run_fused_emit(
     let full_groups = logical_len >> 8;
     let mut run_start = 0u32;
 
+    let FusedScratch {
+        runs,
+        arena_positions,
+        order,
+        keys,
+        ..
+    } = scratch;
+    let mut emit = Emit {
+        runs,
+        arena: arena_positions,
+        order,
+        keys,
+    };
+
     // C++ l.2487: a run ends at a template boundary (`flags[group] != 0`) or at
     // the last full group.
     for group in 1..=full_groups {
         if view.flags[group as usize] != 0 || group == full_groups {
-            if !emit_fused_full_group_run(&view, run_start, group, scratch, singletons) {
+            if !emit_fused_full_group_run(&view, run_start, group, &mut emit, singletons) {
                 return None;
             }
             run_start = group;
@@ -1219,7 +1228,7 @@ fn run_fused_emit(
         &view,
         full_groups << 8,
         logical_len & 0xff,
-        scratch,
+        &mut emit,
         singletons,
     ) {
         return None;

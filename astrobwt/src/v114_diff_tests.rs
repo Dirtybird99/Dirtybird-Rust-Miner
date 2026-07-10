@@ -61,24 +61,21 @@ fn run_both(input: &[u8], scratch: &mut AstroBwtScratch) -> Option<Both> {
         sais32::build_v114_stage5_flags(&scratch.v114_markers, logical_len, &mut flags)? as usize;
     let flags = &flags[..flag_len];
 
-    // C++ path (through the existing FFI wrappers).
+    // C++ path, pinned: call the FFI directly rather than through the
+    // `DERO_V114_CPP` dispatcher, which now defaults to the Rust backend and
+    // would otherwise make this test compare Rust against itself.
     let mut cpp_buf = crate::lpbuf::LpVec::<i32>::with_capacity(logical_len);
-    let mut cpp_flags = flags.to_vec();
-    let cpp_ok = sais32::suffix_array_v114_into(
+    cpp_buf.resize(logical_len, 0);
+    let cpp_ok = sais32::suffix_array_v114_cpp_into(
         &scratch.data,
         logical_len,
-        &scratch.v114_markers,
-        &mut cpp_flags,
+        flags,
+        flag_len as u32,
         &mut cpp_buf,
     );
     let cpp_sa = cpp_ok.then(|| cpp_buf[..].to_vec());
-    let mut cpp_flags = flags.to_vec();
-    let cpp_hash = sais32::hash_v114_fused_into(
-        &scratch.data,
-        logical_len,
-        &scratch.v114_markers,
-        &mut cpp_flags,
-    );
+    let cpp_hash =
+        sais32::hash_v114_cpp_fused_into(&scratch.data, logical_len, flags, flag_len as u32);
 
     // Pure-Rust path (same inputs, direct call).
     let mut rust_buf = vec![0i32; logical_len];
