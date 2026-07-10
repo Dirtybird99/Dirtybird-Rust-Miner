@@ -9,17 +9,17 @@ description = "AstroBWTv3 proof-of-work hash (DERO HE STARGATE) — port of astr
 # Pure-Rust sais32 stays the DEFAULT so wasm / no-C-toolchain builds are untouched.
 default = []
 # Opt-in: route AstroBWTv3's suffix-array step through the C library libsais.
-# Enabled only by the (fail-safe) miner; verification paths stay on pure Rust.
+# Kept ONLY as a differential-fuzz/benchmark oracle now — the production `v114`
+# path no longer uses it (its refusal fallback is the pure-Rust sais32).
 libsais = ["dep:libsais-sys"]
-# Opt-in: Dirtybird v1.14 descriptor suffix-array backend for mining, in pure
-# Rust (src/v114.rs). Falls back to libsais if descriptor construction refuses
-# an input. Needs no C++ toolchain.
-v114 = ["libsais"]
+# Production mining backend: the Dirtybird v1.14 descriptor suffix array, in pure
+# Rust (src/v114.rs). Refused inputs fall back to the pure-Rust sais32. Needs NO
+# C toolchain at all (no clang-cl, no cc/libsais).
+v114 = []
 # Dev/verification only: ALSO compile the vendored C++ descriptor SA
-# (vendor/v114) that `v114` was ported from, so the two can be differentially
-# fuzzed and benchmarked head-to-head (DERO_V114_CPP=1 selects it at runtime).
-# Requires clang-cl on PATH; `v114` alone does not.
-v114-cpp = ["v114"]
+# (vendor/v114) AND libsais, so the Rust SA can be differentially fuzzed against
+# both (DERO_V114_CPP=1 selects the C++ at runtime). Requires clang-cl on PATH.
+v114-cpp = ["v114", "libsais"]
 # Opt-in: per-stage rdtsc instrumentation (measurement only). Adds a separate
 # profiled pipeline; the production hot path is untouched.
 profiling = []

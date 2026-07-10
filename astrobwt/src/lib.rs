@@ -143,9 +143,11 @@ pub struct Debug {
 }
 
 /// Suffix-array engine for AstroBWTv3 step 6. Defaults to the verified pure-Rust
-/// [`sais32::suffix_array`]; with `feature = "libsais"` (miner-only, opt-in) it
-/// uses the faster C [`sais32::suffix_array_libsais`], which produces the
-/// identical array (gated byte-for-byte). Output is unchanged either way.
+/// [`sais32::suffix_array`]; with the opt-in `feature = "libsais"` oracle it uses
+/// the C [`sais32::suffix_array_libsais`], which produces the identical array
+/// (gated byte-for-byte). The production `v114` mining path does NOT use this —
+/// it runs the pure-Rust descriptor SA (`src/v114.rs`) with a pure-Rust sais32
+/// fallback. Output is unchanged either way.
 #[inline]
 fn sa32(text: &[u8]) -> Vec<i32> {
     #[cfg(feature = "libsais")]
@@ -182,7 +184,9 @@ fn sha256_sa_i32_le(sa: &[i32]) -> [u8; 32] {
 /// Reusable per-thread scratch for the AstroBWTv3 mining fast path.
 pub struct AstroBwtScratch {
     data: crate::lpbuf::LpVec<u8>,
-    #[cfg(feature = "libsais")]
+    // The materialized-SA buffer is used by both the libsais path and the v114
+    // (descriptor) path, so it exists whenever either is enabled.
+    #[cfg(any(feature = "libsais", feature = "v114"))]
     sa: crate::lpbuf::LpVec<i32>,
     #[cfg(feature = "libsais")]
     libsais_ctx: sais32::LibsaisCtx,
@@ -196,7 +200,7 @@ impl AstroBwtScratch {
     pub fn new() -> Self {
         Self {
             data: crate::lpbuf::LpVec::with_capacity(ASTROBWT_DATA_CAPACITY),
-            #[cfg(feature = "libsais")]
+            #[cfg(any(feature = "libsais", feature = "v114"))]
             sa: crate::lpbuf::LpVec::with_capacity(ASTROBWT_DATA_CAPACITY),
             #[cfg(feature = "libsais")]
             libsais_ctx: sais32::LibsaisCtx::new(),
@@ -476,16 +480,15 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
                     &mut scratch.v114_flags,
                     &mut scratch.sa,
                 );
-                let sa: &[i32] = if used_v114 {
-                    &scratch.sa[..]
+                if used_v114 {
+                    sha256_sa_i32_le(&scratch.sa[..])
                 } else {
-                    sais32::suffix_array_libsais_into(
-                        &scratch.data[..data_len],
-                        &mut scratch.sa,
-                        &scratch.libsais_ctx,
-                    )
-                };
-                sha256_sa_i32_le(sa)
+                    // Descriptor SA refused this input (~never on real work).
+                    // Fall back to the pure-Rust SA-IS — byte-identical SA, and a
+                    // cold path, so allocating is fine. No C dependency.
+                    let sa = sais32::suffix_array(&scratch.data[..data_len]);
+                    sha256_sa_i32_le(&sa)
+                }
             }
         } else {
             let used_v114 = sais32::suffix_array_v114_into(
@@ -495,16 +498,12 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
                 &mut scratch.v114_flags,
                 &mut scratch.sa,
             );
-            let sa: &[i32] = if used_v114 {
-                &scratch.sa[..]
+            if used_v114 {
+                sha256_sa_i32_le(&scratch.sa[..])
             } else {
-                sais32::suffix_array_libsais_into(
-                    &scratch.data[..data_len],
-                    &mut scratch.sa,
-                    &scratch.libsais_ctx,
-                )
-            };
-            sha256_sa_i32_le(sa)
+                let sa = sais32::suffix_array(&scratch.data[..data_len]);
+                sha256_sa_i32_le(&sa)
+            }
         }
     };
     #[cfg(all(feature = "libsais", not(feature = "v114")))]
@@ -513,7 +512,7 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
         let sa = sais32::suffix_array_libsais_into(data, &mut scratch.sa, &scratch.libsais_ctx);
         sha256_sa_i32_le(sa)
     };
-    #[cfg(not(feature = "libsais"))]
+    #[cfg(all(not(feature = "libsais"), not(feature = "v114")))]
     let output = {
         let data = &scratch.data[..data_len];
         let sa = sais32::suffix_array(data);
@@ -662,33 +661,41 @@ pub fn astrobwtv3_stage_cycles(input: &[u8], scratch: &mut AstroBwtScratch) -> [
     let t2 = rdtsc();
 
     // --- suffix array (active backend) ---
-    #[cfg(feature = "libsais")]
+    // Three mutually-exclusive arms: v114 (descriptor, pure-Rust fallback),
+    // libsais-only, and pure-Rust sais32. The fallback SA is built BEFORE t3 so
+    // the SA/SHA split stays honest on the (cold) refusal path.
+    #[cfg(feature = "v114")]
+    {
+        let used = sais32::suffix_array_v114_into(
+            &scratch.data,
+            data_len,
+            &scratch.v114_markers,
+            &mut scratch.v114_flags,
+            &mut scratch.sa,
+        );
+        let fallback = if used {
+            None
+        } else {
+            Some(sais32::suffix_array(&scratch.data[..data_len]))
+        };
+        let t3 = rdtsc();
+        let _ = match &fallback {
+            Some(sa) => sha256_sa_i32_le(sa),
+            None => sha256_sa_i32_le(&scratch.sa[..]),
+        };
+        let t4 = rdtsc();
+        return [t1 - t0, t2 - t1, t3 - t2, t4 - t3];
+    }
+    #[cfg(all(feature = "libsais", not(feature = "v114")))]
     {
         let data = &scratch.data[..data_len];
-        #[cfg(feature = "v114")]
-        let sa: &[i32] = {
-            let used = sais32::suffix_array_v114_into(
-                &scratch.data,
-                data_len,
-                &scratch.v114_markers,
-                &mut scratch.v114_flags,
-                &mut scratch.sa,
-            );
-            if used {
-                &scratch.sa[..]
-            } else {
-                sais32::suffix_array_libsais_into(data, &mut scratch.sa, &scratch.libsais_ctx)
-            }
-        };
-        #[cfg(not(feature = "v114"))]
-        let sa: &[i32] =
-            sais32::suffix_array_libsais_into(data, &mut scratch.sa, &scratch.libsais_ctx);
+        let sa = sais32::suffix_array_libsais_into(data, &mut scratch.sa, &scratch.libsais_ctx);
         let t3 = rdtsc();
         let _ = sha256_sa_i32_le(sa);
         let t4 = rdtsc();
         return [t1 - t0, t2 - t1, t3 - t2, t4 - t3];
     }
-    #[cfg(not(feature = "libsais"))]
+    #[cfg(all(not(feature = "libsais"), not(feature = "v114")))]
     {
         let data = &scratch.data[..data_len];
         let sa = sais32::suffix_array(data);
@@ -713,7 +720,7 @@ mod tests {
     /// data_len are zero; our production fuzz says it diverges ~1.4%. Inspect the
     /// ACTUAL tail bytes in production scratch, and test whether explicitly
     /// re-zeroing a generous tail makes suffix_array_v114_into match libsais.
-    #[cfg(feature = "v114")]
+    #[cfg(all(feature = "v114", feature = "libsais"))]
     #[test]
     #[ignore = "diagnostic; run with --ignored --nocapture"]
     fn diag_tail_zero_hypothesis() {
@@ -846,7 +853,7 @@ mod tests {
     /// many random inputs, and on the first divergence print enough structure to
     /// characterize the failure (data_len, first differing index, and whether
     /// the descriptor SA is even a valid permutation of 0..n).
-    #[cfg(feature = "v114")]
+    #[cfg(all(feature = "v114", feature = "libsais"))]
     #[test]
     #[ignore = "diagnostic; run explicitly with --ignored"]
     fn v114_descriptor_sa_array_fuzz_diagnostic() {
@@ -924,7 +931,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "v114")]
+    #[cfg(all(feature = "v114", feature = "libsais"))]
     #[test]
     fn v114_descriptor_sa_matches_libsais_on_astrobwt_data() {
         let cases: [&[u8]; 4] = [

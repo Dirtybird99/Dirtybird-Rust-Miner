@@ -14,7 +14,9 @@
 //!     u8[F]       flags           (per-group template boundaries)
 //!     i32[N] LE   libsais_sa      (ground-truth suffix array)
 
-#[cfg(feature = "v114")]
+// Needs libsais as the ground-truth SA to compare against, so it requires the
+// dev oracle feature (the production `v114` build no longer links libsais).
+#[cfg(all(feature = "v114", feature = "libsais"))]
 fn main() {
     use std::io::Write;
 
@@ -80,8 +82,8 @@ fn main() {
     println!("wrote {} bytes to {}", buf.len(), out_path);
 }
 
-#[cfg(not(feature = "v114"))]
+#[cfg(not(all(feature = "v114", feature = "libsais")))]
 fn main() {
-    eprintln!("build with --features v114");
+    eprintln!("build with --features \"v114 libsais\" (needs the libsais oracle)");
     std::process::exit(1);
 }

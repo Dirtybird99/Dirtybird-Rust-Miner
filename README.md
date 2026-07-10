@@ -30,21 +30,27 @@ used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
   **verify-on-submit**: any target-clearing share is re-checked with the canonical
   (SA-IS/libsais) PoW before it is sent, so a bug or hardware glitch costs a share rather
   than submitting garbage.
-- **No unsafe in the hot path.** `astrobwt/src/v114.rs` is `#![forbid(unsafe_code)]`, and
-  no C++ is compiled unless you opt into the `v114-cpp` verification feature.
+- **100% Rust hash, no C toolchain.** The whole AstroBWTv3 hash path is pure Rust:
+  `astrobwt/src/v114.rs` is `#![forbid(unsafe_code)]`, its rare refusal fallback is the
+  pure-Rust `sais32` (not C libsais), and `--features v114` compiles with **no C compiler at
+  all** — no clang-cl, no cc/libsais. The C++ descriptor SA and the C libsais are opt-in
+  differential-fuzz oracles behind the dev-only `v114-cpp` feature. (The pool TLS still links
+  `ring`, which contains C/assembly — that's the one remaining non-Rust dependency.)
 - **Honest benchmarking built in.** `--sustained` is a counter-summed, fixed-window scoreboard
   (the per-thread `--bench` table understates hybrid-CPU throughput). [`headtohead.ps1`](headtohead.ps1)
   reproduces the head-to-head vs the C miner.
 
 ## Build
 
-**No C++ toolchain required.** The descriptor suffix array is Rust, so a plain stable
-`cargo build` is the whole story — no `clang-cl`, no matched-LLVM nightly, no
-`.cargo/config.toml`. Use the plain `release` profile: fat LTO (`--profile release-lto`) is
-a ~6% *pessimization* for the Rust backend, see [BENCHMARKS.md](BENCHMARKS.md).
+**No C toolchain required — at all.** The descriptor suffix array AND its refusal fallback
+are pure Rust (`sais32`), so a plain stable `cargo build --release -p dero-miner --features
+v114` is the whole story — no `clang-cl`, no `cc`/C compiler, no libsais, no matched-LLVM
+nightly, no `.cargo/config.toml`. Use the plain `release` profile: fat LTO (`--profile
+release-lto`) is a ~6% *pessimization* for the Rust backend, see [BENCHMARKS.md](BENCHMARKS.md).
 
-The vendored C++ is retained only as a differential oracle behind the dev-only `v114-cpp`
-feature, which *does* need `clang-cl` on `PATH`. See [BUILDING-LTO.md](BUILDING-LTO.md).
+The vendored C++ descriptor SA and the C `libsais` are retained only as differential-fuzz
+oracles behind the dev-only `v114-cpp` feature, which *does* need `clang-cl` on `PATH`.
+See [BUILDING-LTO.md](BUILDING-LTO.md).
 
 ```sh
 cargo build --release -p dero-miner --features v114      # stable; ~parity with C
