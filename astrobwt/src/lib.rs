@@ -31,6 +31,9 @@ pub mod suffixarray;
 /// Alias for the retained reference suffix array (the differential-fuzz oracle).
 pub use suffixarray::suffix_array as suffix_array_reference;
 
+#[cfg(all(test, feature = "v114"))]
+mod v114_golden_tests;
+
 pub use difficulty::{
     check_pow_hash_big, pow_hash_at_height, pow_hash_at_height_with_scratch, verify_miniblock_pow,
     verify_miniblock_pow_v3, MAJOR_HF2_HEIGHT_MAINNET, MINIBLOCK_HIGHDIFF,
