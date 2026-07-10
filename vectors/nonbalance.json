@@ -1,0 +1,12 @@
+{
+  "added_ser_hex": "2a2efb423aea76a37028b7ba69a6a17db45da5ef20c0392c051d28f180e7ad06020119adc58cba1cdc0571be9eff28692f9302ebf9b6d4c4e0f283d7bdcd1edac47d00",
+  "nc": 3,
+  "nd": 2,
+  "nl": 100,
+  "nonce": 42,
+  "nr": 7,
+  "reg_amount": 1000,
+  "reg_secret": 5,
+  "reg_ser_hex": "00185a2424589ccd6cd10fbb4e494b79a4ad58894479a9c803a5dd3932968192bb0002eacfbf92b94015c9b0b3d901dae37ec68f74dea7e4484c76d505aade4ad7c001",
+  "ser_hex": "2a23f9688c31b204b8240a0d641c84cfeac70d300365a90997f5f888e873f09ebe010372ee2dcfd41f4edef9e4ccecb9498988edf35db876759b4afb48341c70829701"
+}

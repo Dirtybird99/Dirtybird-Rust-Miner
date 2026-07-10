@@ -18,6 +18,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha3"
 	_ "embed"
 	"encoding/binary"
@@ -35,6 +36,7 @@ import (
 	"github.com/deroproject/derohe/cryptography/crypto"
 	"github.com/deroproject/derohe/rpc"
 	"github.com/deroproject/derohe/transaction"
+	"github.com/deroproject/graviton"
 )
 
 //go:embed proofnonce_tx.hex
@@ -973,6 +975,231 @@ func dumpCrypto() {
 	})
 }
 
+// ---- crypto algebra helpers -----------------------------------------------
+
+var scalarOrder = bn256.Order
+
+func fvOf(xs ...int64) *crypto.FieldVector {
+	v := make([]*big.Int, len(xs))
+	for i, x := range xs {
+		v[i] = big.NewInt(x)
+	}
+	return crypto.NewFieldVector(v)
+}
+
+func bigs(xs ...int64) []*big.Int {
+	v := make([]*big.Int, len(xs))
+	for i, x := range xs {
+		v[i] = big.NewInt(x)
+	}
+	return v
+}
+
+func decStrs(bs []*big.Int) []string {
+	out := make([]string, len(bs))
+	for i, b := range bs {
+		out[i] = b.String()
+	}
+	return out
+}
+
+func gMul(n int64) *bn256.G1 {
+	return new(bn256.G1).ScalarMult(crypto.G, big.NewInt(n))
+}
+
+func fvRaw(fv *crypto.FieldVector) []*big.Int { return fv.SliceRaw(0, fv.Length()) }
+
+func compHex(g *bn256.G1) string { return hex.EncodeToString(g1Compress(g)) }
+
+// ---- polynomial.json ------------------------------------------------------
+
+func dumpPolynomial() {
+	a := bigs(1, 2, 3)
+	b := bigs(4, 5, 6)
+	rows := crypto.RecursivePolynomials(nil, crypto.NewPolynomial(bigs(1)), a, b)
+	recRows := make([][]string, len(rows))
+	for i, r := range rows {
+		recRows[i] = decStrs(r)
+	}
+	emit(map[string]any{"a": decStrs(a), "b": decStrs(b), "rec_rows": recRows})
+}
+
+// ---- nonbalance.json ------------------------------------------------------
+
+func dumpNonbalance() {
+	nonce := uint64(42)
+	nl, nr, nc, nd := int64(100), int64(7), int64(3), int64(2)
+	balance := crypto.ConstructElGamal(gMul(nl), gMul(nr))
+	nb := &crypto.NonceBalance{NonceHeight: nonce, Balance: balance}
+	echanges := crypto.ConstructElGamal(gMul(nc), gMul(nd))
+	added := &crypto.NonceBalance{NonceHeight: nonce, Balance: balance.Add(echanges)}
+
+	regSecret, regAmount := int64(5), uint64(1000)
+	pubkey := gMul(regSecret)
+	regbal := crypto.ConstructElGamal(pubkey, crypto.ElGamal_BASE_G).Plus(big.NewInt(int64(regAmount)))
+	regnb := &crypto.NonceBalance{NonceHeight: 0, Balance: regbal}
+
+	emit(map[string]any{
+		"nonce": nonce, "nl": nl, "nr": nr, "nc": nc, "nd": nd,
+		"ser_hex":       hex.EncodeToString(nb.Serialize()),
+		"added_ser_hex": hex.EncodeToString(added.Serialize()),
+		"reg_secret":    regSecret, "reg_amount": regAmount,
+		"reg_ser_hex": hex.EncodeToString(regnb.Serialize()),
+	})
+}
+
+// ---- statement.json -------------------------------------------------------
+
+func dumpStatement() {
+	gsumInput := "the graviton sum input"
+	gsum := graviton.Sum([]byte(gsumInput))
+
+	// ring size must be a power of 2 (Statement.Serialize → GetPowerof2)
+	pubScalars := []int64{11, 22, 33, 44}
+	cScalars := []int64{4, 5, 6, 7}
+	dScalar := int64(7)
+	var roothash [32]byte
+	copy(roothash[:], mustHashBytes("77777777777777777777777777777777777777777777777777777777777777aa"))
+
+	pubs := make([]*bn256.G1, len(pubScalars))
+	for i, n := range pubScalars {
+		pubs[i] = gMul(n)
+	}
+	cs := make([]*bn256.G1, len(cScalars))
+	for i, n := range cScalars {
+		cs[i] = gMul(n)
+	}
+	s := crypto.Statement{
+		Publickeylist:       pubs,
+		C:                   cs,
+		D:                   gMul(dScalar),
+		Fees:                12345,
+		Bytes_per_publickey: 8,
+		Roothash:            roothash,
+	}
+	var buf bytes.Buffer
+	s.Serialize(&buf)
+
+	emit(map[string]any{
+		"graviton_sum_input":  gsumInput,
+		"graviton_sum_hex":    hex.EncodeToString(gsum[:]),
+		"pub_scalars":         pubScalars,
+		"c_scalars":           cScalars,
+		"d_scalar":            dScalar,
+		"roothash_hex":        hex.EncodeToString(roothash[:]),
+		"fees":                s.Fees,
+		"bytes_per_publickey": s.Bytes_per_publickey,
+		"serialized_hex":      hex.EncodeToString(buf.Bytes()),
+	})
+}
+
+// ---- algebra.json ---------------------------------------------------------
+
+func dumpAlgebra() {
+	a := fvOf(1, 2, 3, 4)
+	b := fvOf(5, 6, 7, 8)
+
+	// FieldVector ops
+	out := map[string]any{
+		"inner_product": a.InnerProduct(b).String(),
+		"hadamard":      decStrs(fvRaw(a.Hadamard(b))),
+		"times_a_9":     decStrs(fvRaw(a.Times(big.NewInt(9)))),
+		"negate_a":      decStrs(fvRaw(a.Negate())),
+		"sum_a":         a.Sum().String(),
+		"flip_a":        decStrs(fvRaw(a.Flip())),
+		"add_ab":        decStrs(fvRaw(a.Add(b))),
+		"concat_ab":     decStrs(fvRaw(a.Concat(b))),
+		"invert_a":      decStrs(fvRaw(a.Invert())),
+	}
+
+	// FieldVectorPolynomial
+	poly := crypto.NewFieldVectorPolynomial(a, b)
+	poly2 := crypto.NewFieldVectorPolynomial(b, a)
+	out["poly_eval_x3"] = decStrs(fvRaw(poly.Evaluate(big.NewInt(3))))
+	out["poly_inner_product"] = decStrs(poly.InnerProduct(poly2))
+
+	// PointVector + convolution
+	base := []*bn256.G1{gMul(1), gMul(2), gMul(3), gMul(4)}
+	bv := crypto.NewPointVector(base)
+	basePts := make([]string, len(base))
+	for i, p := range base {
+		basePts[i] = compHex(p)
+	}
+	out["base_points"] = basePts
+	out["commit_1234"] = compHex(bv.Commit(bigs(1, 2, 3, 4)))
+	out["multi_exp"] = compHex(bv.MultiExponentiate(a))
+	out["pv_sum"] = compHex(bv.Sum())
+	conv := crypto.Convolution(a, bv)
+	convPts := make([]string, conv.Length())
+	for i := 0; i < conv.Length(); i++ {
+		convPts[i] = compHex(conv.Slice(i, i+1).Sum())
+	}
+	out["convolution"] = convPts
+
+	// pedersen_commit(99, [2,4,6,8], [1,3,5,7]) — computed to match the Rust
+	// (blind·H + Σ Gs[i]·g[i] + Σ Hs[i]·h[i]), since Go's Commit randomizes.
+	gexps := bigs(2, 4, 6, 8)
+	hexps := bigs(1, 3, 5, 7)
+	hPoint := crypto.HashToPoint(crypto.HashtoNumber([]byte(crypto.PROTOCOL_CONSTANT + "H")))
+	res := new(bn256.G1).ScalarMult(hPoint, new(big.Int).Mod(big.NewInt(99), scalarOrder))
+	for i, e := range gexps {
+		res = new(bn256.G1).Add(res, new(bn256.G1).ScalarMult(genPoint("G", i), new(big.Int).Mod(e, scalarOrder)))
+	}
+	for i, e := range hexps {
+		res = new(bn256.G1).Add(res, new(bn256.G1).ScalarMult(genPoint("H", i), new(big.Int).Mod(e, scalarOrder)))
+	}
+	out["pedersen_commit"] = compHex(res)
+
+	emit(out)
+}
+
+// ---- innerproduct.json ----------------------------------------------------
+//
+// Salt-driven (deterministic, no RNG) inner-product argument. The Rust
+// InnerProduct::generate(gs, hs, u, a, b, salt) maps to Go's
+// NewInnerProductProof(IPStatement{PrimeBase: GeneratorParams{Gs, Hs, H:u}},
+// IPWitness{L:a, R:b}, salt). P is unused in generation (salt seeds Fiat-Shamir).
+
+func dumpInnerproduct() {
+	const n = 4
+	aVals := []int64{1, 2, 3, 4}
+	bVals := []int64{5, 6, 7, 8}
+	a := fvOf(aVals...)
+	b := fvOf(bVals...)
+	salt := big.NewInt(1234567)
+
+	gsPts := make([]*bn256.G1, n)
+	hsPts := make([]*bn256.G1, n)
+	for i := 0; i < n; i++ {
+		gsPts[i] = genPoint("G", i)
+		hsPts[i] = genPoint("H", i)
+	}
+	u := crypto.HashToPoint(crypto.HashtoNumber([]byte(crypto.PROTOCOL_CONSTANT + "H"))) // base_h
+	gsVec := crypto.NewPointVector(gsPts)
+	hsVec := crypto.NewPointVector(hsPts)
+	gp := &crypto.GeneratorParams{H: u, Gs: gsVec, Hs: hsVec}
+
+	// P = <a,gs> + <b,hs> + <a,b>·u — the IP commitment. Its value does not
+	// affect the emitted proof (ls/rs/a/b depend only on the salt-seeded
+	// Fiat-Shamir challenges), but Go threads P through the recursion, so it
+	// must be a valid point (not an uninitialized new(G1)).
+	P := new(bn256.G1).Add(gsVec.Commit(fvRaw(a)), hsVec.Commit(fvRaw(b)))
+	P = new(bn256.G1).Add(P, new(bn256.G1).ScalarMult(u, a.InnerProduct(b)))
+	ips := &crypto.IPStatement{PrimeBase: gp, P: P}
+	witness := &crypto.IPWitness{L: a, R: b}
+	ip := crypto.NewInnerProductProof(ips, witness, salt)
+
+	var buf bytes.Buffer
+	ip.Serialize(&buf)
+	emit(map[string]any{
+		"n":              n,
+		"salt":           salt.String(),
+		"as":             aVals,
+		"bs":             bVals,
+		"serialized_hex": hex.EncodeToString(buf.Bytes()),
+	})
+}
+
 // ---- selfcheck ------------------------------------------------------------
 
 func selfcheck() {
@@ -1025,6 +1252,16 @@ func main() {
 		dumpBn256()
 	case "crypto":
 		dumpCrypto()
+	case "polynomial":
+		dumpPolynomial()
+	case "nonbalance":
+		dumpNonbalance()
+	case "statement":
+		dumpStatement()
+	case "algebra":
+		dumpAlgebra()
+	case "innerproduct":
+		dumpInnerproduct()
 	case "selfcheck":
 		selfcheck()
 	default:
