@@ -53,19 +53,21 @@ cargo build --release -p dero-miner --features v114      # stable; ~parity with 
 ## Testing
 
 ```sh
-cargo test -p dero-astrobwt --features v114     # unit tests + the v114 golden fixture
+cargo test -p dero-astrobwt              # all suites, pure Rust, no toolchain beyond cargo
+cargo test -p dero-astrobwt --features v114   # + the v114 golden fixture
 ```
 
-The descriptor SA is guarded on a fresh clone by `astrobwt/tests/fixtures/v114_golden.json`
-(532 cases: PoW hash, fused hash, SA digest, and *refusal* behaviour), which is committed.
+Everything passes on a fresh clone. Two independent oracle sets guard correctness:
 
-Three older suites — `full_vectors`, `pow16_vectors`, `sais_vectors` — **fail out of the
-box** and always have: their golden values live in `vectors/*.json`, which are generated on
-demand by `go-harness/run.sh` from the Go reference and are **not** committed (only
-`vectors/minerwork.json` is). Regenerate them before running those suites, or select
-around them. This predates the pure-Rust suffix array.
+- **`vectors/*.json`** — golden vectors from the **canonical DERO Go reference**, checked by
+  `astrobwt/tests/{prologue,full,pow16,sais}_vectors.rs`: the prologue (sha256→salsa20→rc4→
+  fnv1a), the op-loop intermediates, the suffix arrays (`sais_8_32` / `sais_8_16` over 26 edge
+  and boundary inputs), and legacy POW16. Regenerate with `go-harness/run.sh` (needs Go); see
+  [go-harness/README.md](go-harness/README.md).
+- **`astrobwt/tests/fixtures/v114_golden.json`** — 532 cases (PoW hash, fused hash, SA digest,
+  and *refusal* behaviour) frozen from the descriptor SA, guarding the pure-Rust `v114` path.
 
-To verify the Rust SA against the C++ it was ported from, see §3 of
+To also diff the Rust SA against the C++ it was ported from, see §3 of
 [BUILDING-LTO.md](BUILDING-LTO.md) (needs `clang-cl`).
 
 ## Usage

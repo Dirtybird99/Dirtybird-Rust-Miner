@@ -1,0 +1,6 @@
+# run.sh MUST stay LF or a Linux clone fails with a bad interpreter (\r).
+# Go tooling is LF-clean too; keep the whole harness LF regardless of platform.
+*.sh   text eol=lf
+*.go   text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
