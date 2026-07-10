@@ -26,6 +26,11 @@
 /optimization-journey.md
 /performance-architecture.md
 
+# proofgen's local, patched copy of derohe's crypto package. derohe crypto is
+# under the DERO RESEARCH LICENSE (non-commercial) and must NOT be redistributed
+# in this MIT repo — regenerate it locally with go-harness/proofgen/setup.sh.
+/go-harness/proofgen/crypto/
+
 # OS / editor cruft
 Thumbs.db
 desktop.ini

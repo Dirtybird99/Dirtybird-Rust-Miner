@@ -23,20 +23,30 @@ OUT="../vectors"
 mkdir -p "$OUT"
 
 ASTRO="astrobwt pow16 sais"
-# block/ module targets: dero-protocol + dero-crypto vectors.
-# (proof, proofrings are NOT here yet — they need a vendored+patched derohe with a
-#  deterministic RNG; see go-harness/block/README.md.)
+# block/ module targets: dero-protocol + dero-crypto (non-proof) vectors.
 BLOCK="address iaddress scdata scdataft block miniblockhash proofnonce argdecode \
 bn256 crypto algebra polynomial nonbalance statement innerproduct"
+# proofgen/ module targets: the Zether transfer proofs (vendored+PATCHED derohe
+# crypto for the deterministic RNG — see proofgen/README.md).
+PROOF="proof proofrings"
 
 gen_astro() { echo "  vectors/$1.json"; go run . "$1" > "$OUT/$1.json"; }
 gen_block() { echo "  vectors/$1.json"; ( cd block && go run . "$1" ) > "$OUT/$1.json"; }
+# proofgen needs a local patched copy of derohe crypto (not committed — RESEARCH
+# licensed); setup.sh materializes it on first use.
+gen_proof() {
+  [ -d proofgen/crypto ] || ( cd proofgen && ./setup.sh )
+  echo "  vectors/$1.json"; ( cd proofgen && go run . "$1" ) > "$OUT/$1.json"
+}
 
 run_all() {
   go run . selfcheck            # astrobwt KAT gate: pow("a")==54e2324d…
-  ( cd block && go run . selfcheck )   # block gate: address round-trip + args
+  ( cd block && go run . selfcheck )       # block gate: address round-trip + args
+  [ -d proofgen/crypto ] || ( cd proofgen && ./setup.sh )
+  ( cd proofgen && go run . selfcheck )    # proof gate: Go verifies its own proof
   for s in $ASTRO; do gen_astro "$s"; done
   for s in $BLOCK; do gen_block "$s"; done
+  for s in $PROOF; do gen_proof "$s"; done
 }
 
 arg="${1:-all}"
@@ -47,7 +57,8 @@ esac
 if [ "$arg" != all ]; then
   if printf '%s\n' $ASTRO | grep -qx "$arg"; then gen_astro "$arg"
   elif printf '%s\n' $BLOCK | grep -qx "$arg"; then gen_block "$arg"
-  else echo "usage: run.sh [all|$ASTRO|$BLOCK]" >&2; exit 2
+  elif printf '%s\n' $PROOF | grep -qx "$arg"; then gen_proof "$arg"
+  else echo "usage: run.sh [all|$ASTRO|$BLOCK|$PROOF]" >&2; exit 2
   fi
 fi
 echo "done."
