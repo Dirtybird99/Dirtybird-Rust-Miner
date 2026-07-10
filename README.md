@@ -50,8 +50,23 @@ feature, which *does* need `clang-cl` on `PATH`. See [BUILDING-LTO.md](BUILDING-
 cargo build --release -p dero-miner --features v114      # stable; ~parity with C
 ```
 
-The peak build additionally needs a nightly toolchain + cross-language LTO — see
-[BUILDING-LTO.md](BUILDING-LTO.md).
+## Testing
+
+```sh
+cargo test -p dero-astrobwt --features v114     # unit tests + the v114 golden fixture
+```
+
+The descriptor SA is guarded on a fresh clone by `astrobwt/tests/fixtures/v114_golden.json`
+(532 cases: PoW hash, fused hash, SA digest, and *refusal* behaviour), which is committed.
+
+Three older suites — `full_vectors`, `pow16_vectors`, `sais_vectors` — **fail out of the
+box** and always have: their golden values live in `vectors/*.json`, which are generated on
+demand by `go-harness/run.sh` from the Go reference and are **not** committed (only
+`vectors/minerwork.json` is). Regenerate them before running those suites, or select
+around them. This predates the pure-Rust suffix array.
+
+To verify the Rust SA against the C++ it was ported from, see §3 of
+[BUILDING-LTO.md](BUILDING-LTO.md) (needs `clang-cl`).
 
 ## Usage
 
