@@ -31,6 +31,14 @@ pub mod suffixarray;
 /// Alias for the retained reference suffix array (the differential-fuzz oracle).
 pub use suffixarray::suffix_array as suffix_array_reference;
 
+/// Pure-Rust port of the v1.14 descriptor suffix-array backend. Currently
+/// verified against the vendored C++ (`vendor/v114`) by the differential tests
+/// in [`v114_diff_tests`]; it replaces the C++ on the hot path once at parity.
+#[cfg(feature = "v114")]
+pub mod v114;
+
+#[cfg(all(test, feature = "v114"))]
+mod v114_diff_tests;
 #[cfg(all(test, feature = "v114"))]
 mod v114_golden_tests;
 

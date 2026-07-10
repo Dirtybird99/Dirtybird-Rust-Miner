@@ -19,6 +19,9 @@ v114 = ["libsais"]
 profiling = []
 
 [dependencies]
+# Safe `&[u32] -> &[u8]` reinterpretation for the fused SHA sink, so the
+# streaming hash path needs no `unsafe` (see src/v114.rs).
+bytemuck = "1"
 sha2 = "0.10"
 sha3.workspace = true
 salsa20 = "0.10"
