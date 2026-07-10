@@ -23,7 +23,11 @@ OUT="../vectors"
 mkdir -p "$OUT"
 
 ASTRO="astrobwt pow16 sais"
-BLOCK="address iaddress scdata scdataft block miniblockhash proofnonce argdecode"
+# block/ module targets: dero-protocol + dero-crypto vectors.
+# (proof, proofrings are NOT here yet — they need a vendored+patched derohe with a
+#  deterministic RNG; see go-harness/block/README.md.)
+BLOCK="address iaddress scdata scdataft block miniblockhash proofnonce argdecode \
+bn256 crypto algebra polynomial nonbalance statement innerproduct"
 
 gen_astro() { echo "  vectors/$1.json"; go run . "$1" > "$OUT/$1.json"; }
 gen_block() { echo "  vectors/$1.json"; ( cd block && go run . "$1" ) > "$OUT/$1.json"; }
