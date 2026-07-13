@@ -166,6 +166,34 @@ Both are *faithfulness* bugs as much as perf bugs: the C++ did neither. Removing
 restored parity. Worth remembering — "port it literally" and "port its memory behavior"
 are not the same thing.
 
+### Dropping the C libsais fallback (2026-07-10) — no throughput cost
+
+Commit `ea3c9f4` removed the C `libsais` dependency entirely from `--features v114`: the
+descriptor SA's rare refusal fallback was rerouted from C `libsais` to the pure-Rust `sais32`,
+so the mining build now links **no C at all**. The hot path is byte-identical Rust in both
+builds and the fallback ~never fires (0 refusals across the 532-case golden fixture + 20k
+fuzz), so the expectation was zero throughput change. Measured HEAD `ea3c9f4` (no libsais) vs
+parent `909dd8b` (libsais linked), plain `release`, `--sustained -t 24 --secs 30`, HIGH
+priority, 2 MB large pages (identical `sustained:` header on both), alternating order, 3 pairs
+after a discarded 20 s warmup:
+
+| pair | NEW (no libsais) | OLD (libsais) | delta |
+|---|---|---|---|
+| 1 | 19.62 | 19.22 | +2.1% |
+| 2 | 19.40 | 19.19 | +1.1% |
+| 3 | 19.32 | 18.98 | +1.8% |
+| **mean** | **19.44** | **19.13** | **+1.6%** |
+
+NEW won all three pairs, but the honest read is **"no regression, possibly a hair faster — not
+a certified speedup."** Two reasons not to bank the +1.6%: (1) n = 3, so the 3 W / 0 L sweep is
+only p ≈ 0.25 (an all-wins result needs ≥ 6 pairs for p < 0.05); and (2) the order was NEW-first
+in every pair, and both binaries drift down ~1.5% first-to-last from thermal settling, biasing
+NEW up by ~0.4%. Corrected for drift the gain is ~+1.3% and still uncertain. **The load-bearing
+conclusion — dropping libsais did not cost throughput — holds regardless.** A proper 6-pair
+ABBA run would be needed to certify the small gain; it is not needed for the "safe to ship"
+decision. (Correctness across the two binaries is byte-identical — same `v114_golden.json`
+fixture — so this is a pure throughput comparison.)
+
 ## Not claimed here
 
 - A previously-measured **+6% at 16T** (via P-core pinning) is **not** re-verified against the

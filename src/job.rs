@@ -26,7 +26,7 @@ pub struct GetBlockTemplateResult {
     /// server (websocket_getwork_server.go:158-160).
     #[serde(default)]
     pub difficulty: String,
-    /// Display-only ("NW hashrate"); never used for the PoW check.
+    /// Status-only raw job difficulty; never used for the PoW check.
     #[serde(default)]
     pub difficultyuint64: u64,
     #[serde(default)]
@@ -77,7 +77,10 @@ mod tests {
         // blocktemplate_blob field).
         let v = vectors();
         let line = v["job_json"].as_str().unwrap();
-        assert!(line.ends_with('\n'), "server lines carry a trailing newline");
+        assert!(
+            line.ends_with('\n'),
+            "server lines carry a trailing newline"
+        );
         let job: GetBlockTemplateResult = serde_json::from_str(line).unwrap();
         assert_eq!(job.jobid, "1748090000123.0.notified");
         assert_eq!(job.blocktemplate_blob, "", "omitempty field defaults");
@@ -85,12 +88,18 @@ mod tests {
         assert_eq!(job.difficulty, "312979370");
         assert_eq!(job.difficultyuint64, 312979370);
         assert_eq!(job.height, 3528900);
-        assert_eq!(job.prev_hash, "7be1d3851b2787140b542525bd21c1b5ab4b938af6eeb85156400a8542c4093e");
+        assert_eq!(
+            job.prev_hash,
+            "7be1d3851b2787140b542525bd21c1b5ab4b938af6eeb85156400a8542c4093e"
+        );
         assert_eq!(job.epochmilli, 0);
         assert_eq!(job.blocks, 2);
         assert_eq!(job.miniblocks, 105);
         assert_eq!(job.rejected, 1);
-        assert_eq!(job.lasterror, "unregistered miner or you need to wait 15 mins");
+        assert_eq!(
+            job.lasterror,
+            "unregistered miner or you need to wait 15 mins"
+        );
         assert_eq!(job.status, "");
         // from_slice path (what the connection loop uses) also tolerates it
         let _: GetBlockTemplateResult = serde_json::from_slice(line.as_bytes()).unwrap();
@@ -100,8 +109,12 @@ mod tests {
     fn submit_serializes_byte_exact_vs_go() {
         let v = vectors();
         let want = v["submit_json"].as_str().unwrap();
-        let job: GetBlockTemplateResult = serde_json::from_str(v["job_json"].as_str().unwrap()).unwrap();
-        let submit = SubmitBlockParams { jobid: job.jobid, mbl_blob: job.blockhashing_blob };
+        let job: GetBlockTemplateResult =
+            serde_json::from_str(v["job_json"].as_str().unwrap()).unwrap();
+        let submit = SubmitBlockParams {
+            jobid: job.jobid,
+            mbl_blob: job.blockhashing_blob,
+        };
         assert_eq!(serde_json::to_string(&submit).unwrap(), want);
     }
 }
