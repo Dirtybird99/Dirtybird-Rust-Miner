@@ -5,18 +5,12 @@ A Rust CPU miner for **DERO**'s AstroBWTv3 proof-of-work — a port of the Go re
 **pure Rust** (`astrobwt/src/v114.rs`, `#![forbid(unsafe_code)]`), ported from the C++ that
 used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
 
-> This is the **`fused-lto-win`** branch: a *different, faster* codebase from `main`. It
-> trades `main`'s cross-platform packaging for a single fused hashing path that, on an
-> i7-13700HX, runs **+9–14% faster than
-> [Dirtybird-Rust-Miner](https://github.com/Dirtybird99/Dirtybird-Rust-Miner) `main`** and
-> **matches the Dirtybird C miner at peak**. Full, honestly-calibrated numbers in
-> [BENCHMARKS.md](BENCHMARKS.md).
->
-> Note the historical peak (22.3 KH/s) came from a nightly dual-PGO + cross-language-LTO
-> build. That build is obsolete: there is no C++ left to LTO across. The `+9–14%` and C-miner
-> figures above predate the pure-Rust suffix array and have **not** been re-measured against
-> those competitors since; what *has* been re-measured, head-to-head on one binary, is the
-> Rust SA vs the C++ SA it replaced (~+1%, see BENCHMARKS.md).
+> **The pure-Rust line.** The whole AstroBWTv3 hash path *and* the pool TLS are Rust — the
+> shipped binary needs no C toolchain to build and links no C/assembly dependency. It defaults
+> to a materialized suffix-array path with P-core pinning + HIGH priority and, on CPUs with
+> SHA-NI, a 2-way multibuffer SHA that hashes two nonces at once. Benchmark methodology and the
+> (honestly caveated) cross-miner numbers are in [BENCHMARKS.md](BENCHMARKS.md); each miner is
+> measured with a different tool, so treat sub-percent deltas as noise.
 
 ## Highlights
 
@@ -34,11 +28,12 @@ used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
   `astrobwt/src/v114.rs` is `#![forbid(unsafe_code)]`, its rare refusal fallback is the
   pure-Rust `sais32` (not C libsais), and `--features v114` compiles with **no C compiler at
   all** — no clang-cl, no cc/libsais. The C++ descriptor SA and the C libsais are opt-in
-  differential-fuzz oracles behind the dev-only `v114-cpp` feature. (The pool TLS still links
-  `ring`, which contains C/assembly — that's the one remaining non-Rust dependency.)
+  differential-fuzz oracles behind the dev-only `v114-cpp` feature. The pool TLS is pure Rust too
+  (`rustls` + `rustls-rustcrypto`, replacing `ring`'s C/assembly), so building needs no C
+  compiler and the shipped binary links no C dependency.
 - **Honest benchmarking built in.** `--sustained` is a counter-summed, fixed-window scoreboard
-  (the per-thread `--bench` table understates hybrid-CPU throughput). [`headtohead.ps1`](headtohead.ps1)
-  reproduces the head-to-head vs the C miner.
+  (the per-thread `--bench` table understates hybrid-CPU throughput); see
+  [BENCHMARKS.md](BENCHMARKS.md) for the head-to-head methodology.
 
 ## Build
 

@@ -30,7 +30,7 @@ Windows 11. All numbers are KH/s (thousands of AstroBWTv3 hashes/sec), higher is
 - **Dirtybird-C-Miner**: the **canonical `build-pgo-use` PGO binary**, unpinned (its `set_affinity`
   is a no-op on Windows).
 - **Dirtybird-Rust-Miner**: its own `bench` tool at `affinity=1` (its best config) + 2-way SHA.
-- Reproduce with [`headtohead.ps1`](headtohead.ps1) (mine vs C) — same harness that produced these.
+- Reproduced with a local A/B harness (this miner's `--sustained` vs the C binary) on the same box.
 
 > Caveat: the three miners are each measured with a *different* tool (`--sustained`, C's
 > `pgo-train`, DBR's `bench`). A sub-1% delta is below that cross-tool uncertainty; a +14% delta
@@ -197,7 +197,7 @@ fixture — so this is a pure throughput comparison.)
 ## Not claimed here
 
 - A previously-measured **+6% at 16T** (via P-core pinning) is **not** re-verified against the
-  canonical C binary in these runs, so it is intentionally **not** stated as a result. Re-run
-  `headtohead.ps1 30 8 16` with mine pinned before citing it.
+  canonical C binary in these runs, so it is intentionally **not** stated as a result. Re-run a
+  pinned 16-thread A/B against the C binary before citing it.
 - DBR-Rust is the more **productized** project (cross-platform musl/aarch64 builds, pool defaults,
   release packaging). This comparison is throughput-only on one box.
