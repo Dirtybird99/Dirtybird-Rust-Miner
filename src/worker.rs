@@ -27,6 +27,8 @@ use std::time::Duration;
 use num_bigint::BigUint;
 use num_traits::Zero;
 
+#[cfg(feature = "shani2")]
+use dero_astrobwt::difficulty::pow_hash_at_height_x2;
 use dero_astrobwt::difficulty::{
     check_pow_hash_precomputed, pow_hash_at_height_with_scratch, precompute_pow_target,
 };
@@ -50,8 +52,8 @@ pub struct Shared {
     pub block_counter: AtomicU64,
     pub mini_block_counter: AtomicU64,
     pub rejected: AtomicU64,
-    /// `difficultyuint64` of the last job — displayed as the network hashrate.
-    pub hash_rate: AtomicU64,
+    /// Exact `difficultyuint64` of the last job, including the HighDiff multiplier.
+    pub difficulty: AtomicU64,
     pub our_height: AtomicU64,
     /// Set on exit/quit/bye (Go `Exit_In_Progress` channel close).
     pub exit: AtomicBool,
@@ -66,38 +68,36 @@ impl Shared {
             block_counter: AtomicU64::new(0),
             mini_block_counter: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
-            hash_rate: AtomicU64::new(0),
+            difficulty: AtomicU64::new(0),
             our_height: AtomicU64::new(0),
             exit: AtomicBool::new(false),
         }
     }
 }
 
-/// Optionally pin worker `tid` to a logical core and/or raise process priority
-/// (opt-in; default no-op so the production miner behaves exactly like the Go
-/// reference unless asked).
-///
-/// Activated by environment, mirroring the `--sustained` harness so the winning
-/// config can be wired in without changing call sites:
-///   * `MINER_HIGHPRIO=1`   — raise the process to HIGH priority (applied once,
-///     by worker 0). Measured +~8% sustained on the 13700HX — the single best
-///     lever for this latency-bound load. Recommended ON in production.
-///   * `MINER_PIN=1`        — pin using [`crate::affinity::recommended_order`]
-///     (P-core primaries first, then E-cores, then P HT siblings). On this CPU
-///     pinning ties the Windows scheduler within noise at full (24-thread)
-///     occupancy, so it is optional; the knob exists for completeness / for
-///     under-subscribed runs.
-///   * `MINER_PIN_CORES=..` — explicit comma-separated logical-core list; worker
-///     `tid` pins to `list[tid % list.len()]`. Overrides `MINER_PIN`.
-///
-/// None of these change which hashes are computed; they only place threads and
-/// set scheduling priority.
+/// Pin worker `tid` to a logical core and raise process priority. Both are now
+/// **ON by default** (the config the `--sustained` scoreboard uses and the one
+/// this CPU wants); set the env var to `0`, or pass the CLI opt-out, to disable.
+/// None of this changes which hashes are computed — only thread placement and
+/// scheduling priority.
+///   * `MINER_HIGHPRIO` (default ON; `=0` or `--normal-priority` disables) —
+///     raise the process to HIGH priority once, by worker 0. Measured +~8%
+///     sustained on the 13700HX — the single best lever for this latency-bound load.
+///   * `MINER_PIN` (default ON; `=0` or `--no-pin` disables) — pin using
+///     [`crate::affinity::recommended_order`] (P-core primaries → E-cores → P HT
+///     siblings). Neutral at full 24-thread occupancy, ~+5% at 20T (under-subscribed).
+///   * `MINER_PIN_CORES=..` / `--pin-cores` — explicit comma-separated core list;
+///     worker `tid` pins to `list[tid % list.len()]`. Overrides `MINER_PIN`.
 fn pin_worker(tid: u8) {
     let tid = tid as usize;
 
     // Process-wide priority: apply exactly once (worker 0) to avoid redundant
-    // syscalls. Off by default; flip on in production for the +~8% win.
-    if tid == 0 && std::env::var("MINER_HIGHPRIO").map(|v| v != "0").unwrap_or(false) {
+    // syscalls. ON by default (the +~8% win); `MINER_HIGHPRIO=0` opts out.
+    if tid == 0
+        && std::env::var("MINER_HIGHPRIO")
+            .map(|v| v != "0")
+            .unwrap_or(true)
+    {
         crate::affinity::set_high_priority();
     }
 
@@ -111,7 +111,7 @@ fn pin_worker(tid: u8) {
         }
         return;
     }
-    if std::env::var("MINER_PIN").map(|v| v != "0").unwrap_or(false) {
+    if std::env::var("MINER_PIN").map(|v| v != "0").unwrap_or(true) {
         // Size the recommended order to the active CPU count and index by tid.
         let order = crate::affinity::recommended_order(crate::affinity::active_logical_cpus());
         if !order.is_empty() {
@@ -277,6 +277,85 @@ pub fn grind_job_with_scratch(
     Ok(())
 }
 
+#[cfg(feature = "shani2")]
+#[allow(clippy::too_many_arguments)]
+fn grind_job_x2_with_scratch(
+    job: &GetBlockTemplateResult,
+    local_job_counter: u64,
+    shared: &Shared,
+    random12: &[u8; 12],
+    tid: u8,
+    i: &mut u32,
+    hf2_height: u64,
+    pow_scratch_a: &mut AstroBwtScratch,
+    pow_scratch_b: &mut AstroBwtScratch,
+    on_share: &mut dyn FnMut(&[u8; MINIBLOCK_SIZE]),
+) -> Result<(), GrindError> {
+    let mut work_a = [0u8; MINIBLOCK_SIZE];
+    let blob = job.blockhashing_blob.as_bytes();
+    if blob.len() != MINIBLOCK_SIZE * 2 {
+        return Err(GrindError::BadBlob);
+    }
+    hex::decode_to_slice(blob, &mut work_a).map_err(|_| GrindError::BadBlob)?;
+
+    let height = work_height(&work_a);
+    stamp_job(&mut work_a, random12, tid);
+    let mut work_b = work_a;
+
+    let diff =
+        BigUint::parse_bytes(job.difficulty.as_bytes(), 10).ok_or(GrindError::BadDifficulty)?;
+    if diff.is_zero() {
+        return Err(GrindError::BadDifficulty);
+    }
+    let target = precompute_pow_target(&diff);
+
+    if work_a[0] & 0xf != 1 {
+        return Err(GrindError::BadVersion(work_a[0] & 0x1f));
+    }
+
+    let mut pending_hashes = 0u64;
+    while local_job_counter == shared.job_counter.load(Ordering::Acquire)
+        && !shared.exit.load(Ordering::Relaxed)
+    {
+        for _ in 0..HASH_COUNTER_FLUSH_INTERVAL / 2 {
+            *i = i.wrapping_add(1);
+            put_counter(&mut work_a, *i);
+            put_counter(&mut work_b, i.wrapping_add(1));
+
+            let (pow_a, pow_b) = pow_hash_at_height_x2(
+                &work_a,
+                &work_b,
+                height,
+                hf2_height,
+                pow_scratch_a,
+                pow_scratch_b,
+            );
+            *i = i.wrapping_add(1);
+            record_hash(shared, &mut pending_hashes);
+            record_hash(shared, &mut pending_hashes);
+
+            for (work, pow) in [(&work_a, pow_a), (&work_b, pow_b)] {
+                if check_pow_hash_precomputed(&pow, &target) {
+                    let canonical_ok = if height >= hf2_height {
+                        let canon = dero_astrobwt::astrobwtv3_full(work).0;
+                        check_pow_hash_precomputed(&canon, &target)
+                    } else {
+                        true
+                    };
+                    if canonical_ok {
+                        on_share(work);
+                    }
+                }
+            }
+            if shared.exit.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+    }
+    flush_hashes(shared, &mut pending_hashes);
+    Ok(())
+}
+
 /// The worker thread body — Go `mineblock(tid)`. Snapshots the job, grinds it
 /// via [`grind_job`], pushes found shares as [`SubmitBlockParams`] onto the
 /// submit channel (the connection thread writes them to the websocket; Go
@@ -288,9 +367,8 @@ pub fn mine_thread(
     hf2_height: u64,
     debug: bool,
 ) {
-    // Optional CPU pinning (opt-in, mining semantics unchanged). Off by default
-    // so behaviour matches the Go reference unless the operator asks for it.
-    // See [`pin_worker`] for the env knobs and the winning 13700HX map.
+    // CPU pinning + HIGH priority (ON by default now; mining semantics unchanged).
+    // Opt out via --no-pin / --normal-priority. See [`pin_worker`] for the map.
     pin_worker(tid);
 
     let mut random12 = [0u8; 12];
@@ -301,6 +379,12 @@ pub fn mine_thread(
 
     let mut i: u32 = 0; // persists across jobs (miner.go:471)
     let mut pow_scratch = AstroBwtScratch::new();
+    #[cfg(feature = "shani2")]
+    let two_way = std::env::var("MINER_2WAY")
+        .map(|value| value != "0")
+        .unwrap_or(false);
+    #[cfg(feature = "shani2")]
+    let mut pow_scratch_b = two_way.then(AstroBwtScratch::new);
 
     while !shared.exit.load(Ordering::Relaxed) {
         // snapshot counter FIRST: if a job lands between the two loads we
@@ -324,7 +408,35 @@ pub fn mine_thread(
             });
         };
 
-        match grind_job_with_scratch(
+        #[cfg(feature = "shani2")]
+        let result = if two_way {
+            grind_job_x2_with_scratch(
+                &myjob,
+                local_job_counter,
+                &shared,
+                &random12,
+                tid,
+                &mut i,
+                hf2_height,
+                &mut pow_scratch,
+                pow_scratch_b.as_mut().unwrap(),
+                &mut on_share,
+            )
+        } else {
+            grind_job_with_scratch(
+                &myjob,
+                local_job_counter,
+                &shared,
+                &random12,
+                tid,
+                &mut i,
+                hf2_height,
+                &mut pow_scratch,
+                &mut on_share,
+            )
+        };
+        #[cfg(not(feature = "shani2"))]
+        let result = grind_job_with_scratch(
             &myjob,
             local_job_counter,
             &shared,
@@ -334,7 +446,9 @@ pub fn mine_thread(
             hf2_height,
             &mut pow_scratch,
             &mut on_share,
-        ) {
+        );
+
+        match result {
             Ok(()) => {} // job changed — re-snapshot at once
             Err(GrindError::BadBlob) => {
                 // Go logs "Blockwork could not be decoded successfully" + 1s
@@ -426,6 +540,57 @@ mod tests {
                 c["mutated_hex"].as_str().unwrap(),
                 "tid={tid} i={i}"
             );
+        }
+    }
+
+    #[cfg(feature = "shani2")]
+    #[test]
+    fn two_way_grind_stamps_consecutive_byte_exact_nonces() {
+        let mbl = MiniBlock {
+            version: 1,
+            past_count: 1,
+            height: 1,
+            ..Default::default()
+        };
+        let job = GetBlockTemplateResult {
+            blockhashing_blob: hex::encode(mbl.serialize()),
+            difficulty: "1".into(),
+            ..Default::default()
+        };
+        let shared = Shared::new();
+        let random12 = [0x5a; 12];
+        let mut i = 0u32;
+        let (mut sa, mut sb) = (AstroBwtScratch::new(), AstroBwtScratch::new());
+        let mut shares = Vec::new();
+        let mut on_share = |work: &[u8; MINIBLOCK_SIZE]| {
+            shares.push(*work);
+            if shares.len() == 2 {
+                shared.exit.store(true, Ordering::Relaxed);
+            }
+        };
+
+        grind_job_x2_with_scratch(
+            &job,
+            0,
+            &shared,
+            &random12,
+            7,
+            &mut i,
+            481_600,
+            &mut sa,
+            &mut sb,
+            &mut on_share,
+        )
+        .unwrap();
+
+        assert_eq!(i, 2);
+        assert_eq!(shared.counter.load(Ordering::Relaxed), 2);
+        assert_eq!(shares.len(), 2);
+        for (nonce, work) in (1u32..=2).zip(&shares) {
+            let mut expected = mbl.serialize();
+            stamp_job(&mut expected, &random12, 7);
+            put_counter(&mut expected, nonce);
+            assert_eq!(*work, expected);
         }
     }
 

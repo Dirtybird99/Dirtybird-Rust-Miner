@@ -57,7 +57,7 @@ struct Cli {
     #[arg(short = 'w', long)]
     wallet_address: Option<String>,
     /// Miner will connect to daemon getwork on this address
-    /// (default: minernode1.dero.live:10100; testnet: 127.0.0.1:10100).
+    /// (default: dero-node.mysrv.cloud:10100; testnet: 127.0.0.1:10100).
     #[arg(short = 'd', long)]
     daemon_rpc_address: Option<String>,
     /// Number of CPU threads for mining (default: all logical CPUs, max 255).
@@ -82,12 +82,36 @@ struct Cli {
     /// Pin each worker thread to a logical core during --sustained.
     #[arg(long)]
     pin: bool,
+    /// Disable P-core-first thread pinning on the real miner (pinning is ON by
+    /// default — ~+5% at 20T on the 13700HX for under-subscribed runs).
+    #[arg(long)]
+    no_pin: bool,
+    /// Keep NORMAL process priority (HIGH is the default on the real miner — the
+    /// single best throughput lever, ~+8%).
+    #[arg(long)]
+    normal_priority: bool,
+    /// Explicit comma-separated logical-core pin list (overrides the default map),
+    /// e.g. --pin-cores 0,2,4,6,8,10,12,14,16,17,18,19.
+    #[arg(long)]
+    pin_cores: Option<String>,
+    /// Allocate the AstroBWTv3 scratch (op-loop stream + suffix array) from 2 MB
+    /// large pages (needs SeLockMemoryPrivilege). Off by default — measured
+    /// per-CPU; the `--sustained` scoreboard uses it.
+    #[arg(long)]
+    large_pages: bool,
+    /// Force the FUSED suffix-array→SHA path. By default the miner MATERIALIZES
+    /// the SA then hashes it when under-subscribed (threads < logical CPUs) —
+    /// measured +5.3% at 20T; fused is auto-selected only at full occupancy.
+    #[arg(long)]
+    fused: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
     let mut threads = cli.mining_threads.unwrap_or(cpus as i64);
     if threads > cpus as i64 {
         eprintln!(
@@ -115,6 +139,33 @@ fn main() {
     }
     let threads = threads as usize;
 
+    // Perf levers are ON by default on the real miner (byte-exact — thread
+    // placement + process priority only, never the hash). Translate the CLI
+    // opt-outs to the env knobs `pin_worker` reads; CLI wins over the
+    // environment. Done here while still single-threaded, before any spawn.
+    if cli.no_pin {
+        std::env::set_var("MINER_PIN", "0");
+    }
+    if cli.normal_priority {
+        std::env::set_var("MINER_HIGHPRIO", "0");
+    }
+    if let Some(cores) = cli.pin_cores.as_deref() {
+        std::env::set_var("MINER_PIN_CORES", cores);
+    }
+
+    // Suffix-array hashing path (byte-exact either way). MATERIALIZE+SHA the SA
+    // wins when the box is UNDER-SUBSCRIBED — bandwidth headroom makes the SA
+    // write/read roundtrip cheap and the simpler control flow wins: measured
+    // +5.3% at 20T on the 13700HX. The FUSED stream (no materialization) wins at
+    // FULL occupancy (24-thread bandwidth saturation). Auto-select by occupancy;
+    // `--fused` forces fused. An explicit DERO_MATERIALIZE env is always honored.
+    if std::env::var_os("DERO_MATERIALIZE").is_none() {
+        let full_occupancy = threads >= cpus.max(1);
+        if !cli.fused && !full_occupancy {
+            std::env::set_var("DERO_MATERIALIZE", "1");
+        }
+    }
+
     // --wallet-address: bech32-validated + network prefix check
     // (globals.ParseValidateAddress; miner.go:149-156).
     let Some(wallet_raw) = cli.wallet_address.as_deref() else {
@@ -126,7 +177,11 @@ fn main() {
             if addr.mainnet == cli.testnet {
                 eprintln!(
                     "Wallet address has the wrong network prefix (expected {})",
-                    if cli.testnet { "deto1... (testnet)" } else { "dero1... (mainnet)" }
+                    if cli.testnet {
+                        "deto1... (testnet)"
+                    } else {
+                        "dero1... (mainnet)"
+                    }
                 );
                 std::process::exit(1);
             }
@@ -141,10 +196,20 @@ fn main() {
 
     // miner.go:158-166 — default depends on network, flag overrides.
     let daemon_rpc_address = cli.daemon_rpc_address.clone().unwrap_or_else(|| {
-        if cli.testnet { "127.0.0.1:10100".to_string() } else { "minernode1.dero.live:10100".to_string() }
+        if cli.testnet {
+            "127.0.0.1:10100".to_string()
+        } else {
+            // minernode1.dero.live is DNS-dead (2026); this community derod
+            // getwork node is live. Override with -d for your own pool/node.
+            "dero-node.mysrv.cloud:10100".to_string()
+        }
     });
 
-    let hf2_height = if cli.testnet { MAJOR_HF2_HEIGHT_TESTNET } else { MAJOR_HF2_HEIGHT_MAINNET };
+    let hf2_height = if cli.testnet {
+        MAJOR_HF2_HEIGHT_TESTNET
+    } else {
+        MAJOR_HF2_HEIGHT_MAINNET
+    };
 
     eprintln!("DERO Stargate HE AstroBWT miner (Rust port)");
     eprintln!(
@@ -169,6 +234,21 @@ fn main() {
             .name("getwork".into())
             .spawn(move || getwork(&daemon, &wallet, &shared, submit_rx, debug))
             .expect("spawn getwork");
+    }
+
+    // Optional 2 MB large pages for the per-worker scratch (op-loop stream + SA).
+    // Must run before any worker allocates `AstroBwtScratch`. Mirrors the
+    // `--sustained` harness (sustained.rs); off by default pending per-CPU A/B.
+    if cli.large_pages {
+        let lp = dero_astrobwt::enable_large_pages();
+        eprintln!(
+            "large pages: {}",
+            if lp {
+                "2MB enabled"
+            } else {
+                "unavailable (4KB)"
+            }
+        );
     }
 
     // worker threads (Go: go mineblock(i), miner.go:318-320)
@@ -235,7 +315,11 @@ fn getwork(
             }
         };
         // short read timeout from here on: poll reads, interleave submits
-        if let Err(e) = conn.get_mut().sock.set_read_timeout(Some(Duration::from_millis(100))) {
+        if let Err(e) = conn
+            .get_mut()
+            .sock
+            .set_read_timeout(Some(Duration::from_millis(100)))
+        {
             eprintln!("set_read_timeout: {e}");
         }
 
@@ -281,9 +365,13 @@ fn getwork(
                         eprintln!("received error: err={}", result.lasterror);
                     }
                     shared.block_counter.store(result.blocks, Ordering::Relaxed);
-                    shared.mini_block_counter.store(result.miniblocks, Ordering::Relaxed);
+                    shared
+                        .mini_block_counter
+                        .store(result.miniblocks, Ordering::Relaxed);
                     shared.rejected.store(result.rejected, Ordering::Relaxed);
-                    shared.hash_rate.store(result.difficultyuint64, Ordering::Relaxed);
+                    shared
+                        .difficulty
+                        .store(result.difficultyuint64, Ordering::Relaxed);
                     shared.our_height.store(result.height, Ordering::Relaxed);
                 }
                 Ok(Some(ws::WsMessage::Close)) => {
@@ -314,21 +402,18 @@ fn mining_speed_string(speed: f64) -> String {
     }
 }
 
-/// Go's network-hashrate string (miner.go:267-280): the job difficulty
-/// displayed as H/s (≈ network rate since ~1 miniblock/sec).
-fn hash_rate_string(hash_rate: u64) -> String {
-    if hash_rate > 1_000_000_000_000 {
-        format!("{:.3} TH/s", hash_rate as f64 / 1e12)
-    } else if hash_rate > 1_000_000_000 {
-        format!("{:.3} GH/s", hash_rate as f64 / 1e9)
-    } else if hash_rate > 1_000_000 {
-        format!("{:.3} MH/s", hash_rate as f64 / 1e6)
-    } else if hash_rate > 1_000 {
-        format!("{:.3} KH/s", hash_rate as f64 / 1e3)
-    } else if hash_rate > 0 {
-        format!("{hash_rate} H/s")
+/// Compact scalar formatting for the daemon's exact job difficulty.
+fn difficulty_string(difficulty: u64) -> String {
+    if difficulty > 1_000_000_000_000 {
+        format!("{:.3}T", difficulty as f64 / 1e12)
+    } else if difficulty > 1_000_000_000 {
+        format!("{:.3}G", difficulty as f64 / 1e9)
+    } else if difficulty > 1_000_000 {
+        format!("{:.3}M", difficulty as f64 / 1e6)
+    } else if difficulty > 1_000 {
+        format!("{:.3}K", difficulty as f64 / 1e3)
     } else {
-        String::new()
+        difficulty.to_string()
     }
 }
 
@@ -353,12 +438,12 @@ fn stats_loop(shared: &Shared, testnet: bool) {
             last_height = height;
 
             let line = format!(
-                "DERO Miner: Height {} BLOCKS {} MiniBlocks {} Rejected {} NW {} {}{}>>>",
+                "DERO Miner: Height {} BLOCKS {} MiniBlocks {} Rejected {} DIFF {} {}{}>>>",
                 height,
                 shared.block_counter.load(Ordering::Relaxed),
                 shared.mini_block_counter.load(Ordering::Relaxed),
                 shared.rejected.load(Ordering::Relaxed),
-                hash_rate_string(shared.hash_rate.load(Ordering::Relaxed)),
+                difficulty_string(shared.difficulty.load(Ordering::Relaxed)),
                 mining_speed_string(speed),
                 if testnet { " TESTNET" } else { "" },
             );
@@ -438,7 +523,7 @@ fn command_loop(shared: &Shared) {
 mod tests {
     use super::*;
 
-    /// The display strings must match Go's format verbs (miner.go:253-280).
+    /// Local rate stays Go-compatible; difficulty is an unmodified scalar.
     #[test]
     fn short_benchmark_flags_parse() {
         let cli = Cli::try_parse_from([
@@ -464,22 +549,26 @@ mod tests {
     }
 
     #[test]
-    fn rate_strings_match_go_formats() {
+    fn rate_and_difficulty_strings() {
         assert_eq!(mining_speed_string(0.0), "");
         assert_eq!(mining_speed_string(512.0), "MINING @ 512 H/s");
         assert_eq!(mining_speed_string(1_500.0), "MINING @ 1.500 KH/s");
         assert_eq!(mining_speed_string(2_500_000.0), "MINING @ 2.500 MH/s");
 
-        assert_eq!(hash_rate_string(0), "");
-        assert_eq!(hash_rate_string(999), "999 H/s");
-        assert_eq!(hash_rate_string(312_979_370), "312.979 MH/s");
-        assert_eq!(hash_rate_string(2_000_000_000), "2.000 GH/s");
-        assert_eq!(hash_rate_string(3_500_000_000_000), "3.500 TH/s");
+        assert_eq!(difficulty_string(0), "0");
+        assert_eq!(difficulty_string(999), "999");
+        assert_eq!(difficulty_string(1_500), "1.500K");
+        assert_eq!(difficulty_string(312_979_370), "312.979M");
+        assert_eq!(difficulty_string(2_000_000_000), "2.000G");
+        assert_eq!(difficulty_string(3_500_000_000_000), "3.500T");
     }
 
     #[test]
     fn hf2_heights_match_go_config() {
-        assert_eq!(MAJOR_HF2_HEIGHT_MAINNET, dero_astrobwt::MAJOR_HF2_HEIGHT_MAINNET);
+        assert_eq!(
+            MAJOR_HF2_HEIGHT_MAINNET,
+            dero_astrobwt::MAJOR_HF2_HEIGHT_MAINNET
+        );
         assert_eq!(MAJOR_HF2_HEIGHT_TESTNET, 4); // config/config.go:129
     }
 }
