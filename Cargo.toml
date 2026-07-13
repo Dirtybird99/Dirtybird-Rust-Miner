@@ -21,7 +21,7 @@ path = "src/main.rs"
 libsais = ["dero-astrobwt/libsais"]
 # Opt-in descriptor suffix-array backend (pure Rust, astrobwt/src/v114.rs).
 # It depends on libsais as a correctness-preserving fallback. No C++ toolchain.
-v114 = ["dero-astrobwt/v114"]
+v114 = ["dero-astrobwt/v114", "shani2"]
 shani2 = ["dero-astrobwt/shani2"]
 avx2ops = ["dero-astrobwt/avx2ops"]
 # Dev/verification: additionally compile the vendored C++ this was ported from,

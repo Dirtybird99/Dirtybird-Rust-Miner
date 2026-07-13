@@ -120,6 +120,23 @@ fn pin_worker(tid: u8) {
     }
 }
 
+/// Whether the 2-way SHA-NI pipeline is on by default: only on x86_64 with
+/// SHA-NI (where the interleaved-asm SHA actually wins). Elsewhere the x2 path
+/// would be two sequential `sha2` calls with a doubled working set — pure loss —
+/// so it defaults off. `target_arch`-gated so `is_x86_feature_detected!` (an
+/// x86-only macro) never breaks non-x86 builds of the pure-Rust `v114` feature.
+#[cfg(feature = "shani2")]
+fn two_way_default() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::is_x86_feature_detected!("sha")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 fn record_hash(shared: &Shared, pending_hashes: &mut u64) {
     *pending_hashes += 1;
     if *pending_hashes >= HASH_COUNTER_FLUSH_INTERVAL {
@@ -379,10 +396,16 @@ pub fn mine_thread(
 
     let mut i: u32 = 0; // persists across jobs (miner.go:471)
     let mut pow_scratch = AstroBwtScratch::new();
+    // 2-way SHA-NI pipeline (2 nonces/thread, both SAs materialized then hashed
+    // with the interleaved SHA-NI): ON by default on SHA-NI CPUs — measured
+    // byte-exact +2.5% at 20T and +4% at 24T on the 13700HX. Without SHA-NI the
+    // 2-way falls back to two sequential SHA calls, so the doubled working set
+    // buys nothing — default OFF there. `MINER_2WAY=0` / `--no-2way` opts out;
+    // `MINER_2WAY=1` forces it on regardless.
     #[cfg(feature = "shani2")]
     let two_way = std::env::var("MINER_2WAY")
         .map(|value| value != "0")
-        .unwrap_or(false);
+        .unwrap_or_else(|_| two_way_default());
     #[cfg(feature = "shani2")]
     let mut pow_scratch_b = two_way.then(AstroBwtScratch::new);
 

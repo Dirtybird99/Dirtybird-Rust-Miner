@@ -104,6 +104,10 @@ struct Cli {
     /// measured +5.3% at 20T; fused is auto-selected only at full occupancy.
     #[arg(long)]
     fused: bool,
+    /// Disable the 2-way SHA-NI pipeline (2 nonces per thread). It is ON by
+    /// default on shani2 builds — measured byte-exact +2.5% at 20T / +4% at 24T.
+    #[arg(long)]
+    no_2way: bool,
 }
 
 fn main() {
@@ -151,6 +155,9 @@ fn main() {
     }
     if let Some(cores) = cli.pin_cores.as_deref() {
         std::env::set_var("MINER_PIN_CORES", cores);
+    }
+    if cli.no_2way {
+        std::env::set_var("MINER_2WAY", "0");
     }
 
     // Suffix-array hashing path (byte-exact either way). MATERIALIZE+SHA the SA

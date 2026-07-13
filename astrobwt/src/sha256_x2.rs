@@ -24,68 +24,30 @@ mod x86 {
         0x5be0cd19,
     ];
 
-    const K: [[u32; 4]; 16] = [
-        [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5],
-        [0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5],
-        [0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3],
-        [0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174],
-        [0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc],
-        [0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da],
-        [0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7],
-        [0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967],
-        [0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13],
-        [0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85],
-        [0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3],
-        [0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070],
-        [0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5],
-        [0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3],
-        [0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208],
-        [0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2],
-    ];
+    // SHA-256 round constants K[0..63], flat and 16-byte aligned. The 2-way asm
+    // adds K via `paddd off(%k), %xmm` (a legacy-SSE memory operand), which #GPs
+    // on an unaligned address; the default `[u32; 64]` alignment is only 4.
+    #[repr(align(16))]
+    struct AlignedK([u32; 64]);
+    static K: AlignedK = AlignedK([
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ]);
 
-    #[inline(always)]
-    unsafe fn schedule2(
-        a0: __m128i,
-        a1: __m128i,
-        a2: __m128i,
-        a3: __m128i,
-        b0: __m128i,
-        b1: __m128i,
-        b2: __m128i,
-        b3: __m128i,
-    ) -> (__m128i, __m128i) {
-        let at1 = _mm_sha256msg1_epu32(a0, a1);
-        let bt1 = _mm_sha256msg1_epu32(b0, b1);
-        let at2 = _mm_alignr_epi8(a3, a2, 4);
-        let bt2 = _mm_alignr_epi8(b3, b2, 4);
-        let at3 = _mm_add_epi32(at1, at2);
-        let bt3 = _mm_add_epi32(bt1, bt2);
-        (_mm_sha256msg2_epu32(at3, a3), _mm_sha256msg2_epu32(bt3, b3))
-    }
-
-    macro_rules! rounds4_x2 {
-        ($abefa:ident, $cdgha:ident, $wa:expr,
-         $abefb:ident, $cdghb:ident, $wb:expr, $i:expr) => {{
-            let k = K[$i];
-            let kv = _mm_set_epi32(k[3] as i32, k[2] as i32, k[1] as i32, k[0] as i32);
-            let ta = _mm_add_epi32($wa, kv);
-            let tb = _mm_add_epi32($wb, kv);
-            $cdgha = _mm_sha256rnds2_epu32($cdgha, $abefa, ta);
-            $cdghb = _mm_sha256rnds2_epu32($cdghb, $abefb, tb);
-            let ta = _mm_shuffle_epi32(ta, 0x0e);
-            let tb = _mm_shuffle_epi32(tb, 0x0e);
-            $abefa = _mm_sha256rnds2_epu32($abefa, $cdgha, ta);
-            $abefb = _mm_sha256rnds2_epu32($abefb, $cdghb, tb);
-        }};
-    }
-
-    macro_rules! schedule_rounds4_x2 {
-        ($abefa:ident, $cdgha:ident, $a0:expr, $a1:expr, $a2:expr, $a3:expr, $a4:expr,
-         $abefb:ident, $cdghb:ident, $b0:expr, $b1:expr, $b2:expr, $b3:expr, $b4:expr,
-         $i:expr) => {{
-            ($a4, $b4) = schedule2($a0, $a1, $a2, $a3, $b0, $b1, $b2, $b3);
-            rounds4_x2!($abefa, $cdgha, $a4, $abefb, $cdghb, $b4, $i);
-        }};
+    /// Clear the upper 128 bits of every YMM register. Called once at the top of
+    /// the SHA-NI path so an AVX2 caller's dirty YMM upper does not force each
+    /// legacy-SSE `sha256rnds2` in the compress loop to pay an AVX->SSE blend.
+    #[target_feature(enable = "avx")]
+    unsafe fn zeroupper() {
+        _mm256_zeroupper();
     }
 
     #[inline(always)]
@@ -111,6 +73,11 @@ mod x86 {
 
     #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
     pub(super) unsafe fn hash(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
+        // Drop any dirty YMM upper left by an AVX2 caller before the legacy-SSE
+        // SHA-NI loop; #UD-safe because it is gated on runtime AVX detection.
+        if std::is_x86_feature_detected!("avx") {
+            zeroupper();
+        }
         let (atail, an) = tail(a);
         let (btail, bn) = tail(b);
         let afull = a.len() / 64;
@@ -150,56 +117,343 @@ mod x86 {
             );
             let pa = ba.as_ptr().cast::<__m128i>();
             let pb = bb.as_ptr().cast::<__m128i>();
-            let mut a0 = _mm_shuffle_epi8(_mm_loadu_si128(pa), mask);
-            let mut b0 = _mm_shuffle_epi8(_mm_loadu_si128(pb), mask);
-            let mut a1 = _mm_shuffle_epi8(_mm_loadu_si128(pa.add(1)), mask);
-            let mut b1 = _mm_shuffle_epi8(_mm_loadu_si128(pb.add(1)), mask);
-            let mut a2 = _mm_shuffle_epi8(_mm_loadu_si128(pa.add(2)), mask);
-            let mut b2 = _mm_shuffle_epi8(_mm_loadu_si128(pb.add(2)), mask);
-            let mut a3 = _mm_shuffle_epi8(_mm_loadu_si128(pa.add(3)), mask);
-            let mut b3 = _mm_shuffle_epi8(_mm_loadu_si128(pb.add(3)), mask);
-            let mut a4;
-            let mut b4;
+            // Byte-swap each 16-byte message window to big-endian words (kept in
+            // Rust; VEX-128 leaves the YMM upper clean). These preloaded lanes are
+            // exactly what an in-asm `pshufb SHUF_MASK` would produce.
+            let a0 = _mm_shuffle_epi8(_mm_loadu_si128(pa), mask);
+            let a1 = _mm_shuffle_epi8(_mm_loadu_si128(pa.add(1)), mask);
+            let a2 = _mm_shuffle_epi8(_mm_loadu_si128(pa.add(2)), mask);
+            let a3 = _mm_shuffle_epi8(_mm_loadu_si128(pa.add(3)), mask);
+            let b0 = _mm_shuffle_epi8(_mm_loadu_si128(pb), mask);
+            let b1 = _mm_shuffle_epi8(_mm_loadu_si128(pb.add(1)), mask);
+            let b2 = _mm_shuffle_epi8(_mm_loadu_si128(pb.add(2)), mask);
+            let b3 = _mm_shuffle_epi8(_mm_loadu_si128(pb.add(3)), mask);
 
-            rounds4_x2!(abefa, cdgha, a0, abefb, cdghb, b0, 0);
-            rounds4_x2!(abefa, cdgha, a1, abefb, cdghb, b1, 1);
-            rounds4_x2!(abefa, cdgha, a2, abefb, cdghb, b2, 2);
-            rounds4_x2!(abefa, cdgha, a3, abefb, cdghb, b3, 3);
-            schedule_rounds4_x2!(
-                abefa, cdgha, a0, a1, a2, a3, a4, abefb, cdghb, b0, b1, b2, b3, b4, 4
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a1, a2, a3, a4, a0, abefb, cdghb, b1, b2, b3, b4, b0, 5
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a2, a3, a4, a0, a1, abefb, cdghb, b2, b3, b4, b0, b1, 6
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a3, a4, a0, a1, a2, abefb, cdghb, b3, b4, b0, b1, b2, 7
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a4, a0, a1, a2, a3, abefb, cdghb, b4, b0, b1, b2, b3, 8
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a0, a1, a2, a3, a4, abefb, cdghb, b0, b1, b2, b3, b4, 9
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a1, a2, a3, a4, a0, abefb, cdghb, b1, b2, b3, b4, b0, 10
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a2, a3, a4, a0, a1, abefb, cdghb, b2, b3, b4, b0, b1, 11
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a3, a4, a0, a1, a2, abefb, cdghb, b3, b4, b0, b1, b2, 12
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a4, a0, a1, a2, a3, abefb, cdghb, b4, b0, b1, b2, b3, 13
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a0, a1, a2, a3, a4, abefb, cdghb, b0, b1, b2, b3, b4, 14
-            );
-            schedule_rounds4_x2!(
-                abefa, cdgha, a1, a2, a3, a4, a0, abefb, cdghb, b1, b2, b3, b4, b0, 15
+            // One 64-byte block, both lanes, as hand-scheduled PURE LEGACY-SSE
+            // (no VEX): 16 four-round groups emitted per lane and interleaved at
+            // group granularity, so the OoO core overlaps the two independent
+            // sha256rnds2 latency chains. Direct port of the Zig `compress2` body
+            // (sha256_mb.zig) minus its data-load/pshufb (done above), state
+            // prologue/epilogue (load_state/store_state), loop, and add-back
+            // (done in Rust). xmm map: xmm1/2 = lane A ABEF/CDGH, xmm3/4 = lane B
+            // ABEF/CDGH, xmm5..8 = lane A MSG0..3, xmm9..12 = lane B MSG0..3,
+            // xmm0 = shared MSG scratch, xmm14/15 = per-lane schedule temps. The
+            // asm outputs the post-64-round working state in xmm1..4; the caller
+            // adds the saved pre-block state.
+            core::arch::asm!(
+                // ---- group 0 (rounds 0-3) ----
+                "movdqa %xmm5, %xmm0",
+                "paddd 0({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm9, %xmm0",
+                "paddd 0({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 1 (rounds 4-7) ----
+                "movdqa %xmm6, %xmm0",
+                "paddd 16({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "sha256msg1 %xmm6, %xmm5",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm10, %xmm0",
+                "paddd 16({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "sha256msg1 %xmm10, %xmm9",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 2 (rounds 8-11) ----
+                "movdqa %xmm7, %xmm0",
+                "paddd 32({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "sha256msg1 %xmm7, %xmm6",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm11, %xmm0",
+                "paddd 32({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "sha256msg1 %xmm11, %xmm10",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 3 (rounds 12-15) ----
+                "movdqa %xmm8, %xmm0",
+                "paddd 48({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm8, %xmm14",
+                "palignr $4, %xmm7, %xmm14",
+                "paddd %xmm14, %xmm5",
+                "sha256msg2 %xmm8, %xmm5",
+                "sha256msg1 %xmm8, %xmm7",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm12, %xmm0",
+                "paddd 48({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm12, %xmm15",
+                "palignr $4, %xmm11, %xmm15",
+                "paddd %xmm15, %xmm9",
+                "sha256msg2 %xmm12, %xmm9",
+                "sha256msg1 %xmm12, %xmm11",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 4 (rounds 16-19)  A:MSG0=5,1=6,2=7,3=8 ----
+                "movdqa %xmm5, %xmm0",
+                "paddd 64({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm5, %xmm14",
+                "palignr $4, %xmm8, %xmm14",
+                "paddd %xmm14, %xmm6",
+                "sha256msg2 %xmm5, %xmm6",
+                "sha256msg1 %xmm5, %xmm8",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm9, %xmm0",
+                "paddd 64({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm9, %xmm15",
+                "palignr $4, %xmm12, %xmm15",
+                "paddd %xmm15, %xmm10",
+                "sha256msg2 %xmm9, %xmm10",
+                "sha256msg1 %xmm9, %xmm12",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 5 (rounds 20-23)  A:MSG0=6,1=7,2=8,3=5 ----
+                "movdqa %xmm6, %xmm0",
+                "paddd 80({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm6, %xmm14",
+                "palignr $4, %xmm5, %xmm14",
+                "paddd %xmm14, %xmm7",
+                "sha256msg2 %xmm6, %xmm7",
+                "sha256msg1 %xmm6, %xmm5",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm10, %xmm0",
+                "paddd 80({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm10, %xmm15",
+                "palignr $4, %xmm9, %xmm15",
+                "paddd %xmm15, %xmm11",
+                "sha256msg2 %xmm10, %xmm11",
+                "sha256msg1 %xmm10, %xmm9",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 6 (rounds 24-27)  A:MSG0=7,1=8,2=5,3=6 ----
+                "movdqa %xmm7, %xmm0",
+                "paddd 96({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm7, %xmm14",
+                "palignr $4, %xmm6, %xmm14",
+                "paddd %xmm14, %xmm8",
+                "sha256msg2 %xmm7, %xmm8",
+                "sha256msg1 %xmm7, %xmm6",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm11, %xmm0",
+                "paddd 96({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm11, %xmm15",
+                "palignr $4, %xmm10, %xmm15",
+                "paddd %xmm15, %xmm12",
+                "sha256msg2 %xmm11, %xmm12",
+                "sha256msg1 %xmm11, %xmm10",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 7 (rounds 28-31)  A:MSG0=8,1=5,2=6,3=7 ----
+                "movdqa %xmm8, %xmm0",
+                "paddd 112({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm8, %xmm14",
+                "palignr $4, %xmm7, %xmm14",
+                "paddd %xmm14, %xmm5",
+                "sha256msg2 %xmm8, %xmm5",
+                "sha256msg1 %xmm8, %xmm7",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm12, %xmm0",
+                "paddd 112({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm12, %xmm15",
+                "palignr $4, %xmm11, %xmm15",
+                "paddd %xmm15, %xmm9",
+                "sha256msg2 %xmm12, %xmm9",
+                "sha256msg1 %xmm12, %xmm11",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 8 (rounds 32-35)  A:MSG0=5,1=6,2=7,3=8 ----
+                "movdqa %xmm5, %xmm0",
+                "paddd 128({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm5, %xmm14",
+                "palignr $4, %xmm8, %xmm14",
+                "paddd %xmm14, %xmm6",
+                "sha256msg2 %xmm5, %xmm6",
+                "sha256msg1 %xmm5, %xmm8",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm9, %xmm0",
+                "paddd 128({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm9, %xmm15",
+                "palignr $4, %xmm12, %xmm15",
+                "paddd %xmm15, %xmm10",
+                "sha256msg2 %xmm9, %xmm10",
+                "sha256msg1 %xmm9, %xmm12",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 9 (rounds 36-39)  A:MSG0=6,1=7,2=8,3=5 ----
+                "movdqa %xmm6, %xmm0",
+                "paddd 144({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm6, %xmm14",
+                "palignr $4, %xmm5, %xmm14",
+                "paddd %xmm14, %xmm7",
+                "sha256msg2 %xmm6, %xmm7",
+                "sha256msg1 %xmm6, %xmm5",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm10, %xmm0",
+                "paddd 144({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm10, %xmm15",
+                "palignr $4, %xmm9, %xmm15",
+                "paddd %xmm15, %xmm11",
+                "sha256msg2 %xmm10, %xmm11",
+                "sha256msg1 %xmm10, %xmm9",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 10 (rounds 40-43)  A:MSG0=7,1=8,2=5,3=6 ----
+                "movdqa %xmm7, %xmm0",
+                "paddd 160({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm7, %xmm14",
+                "palignr $4, %xmm6, %xmm14",
+                "paddd %xmm14, %xmm8",
+                "sha256msg2 %xmm7, %xmm8",
+                "sha256msg1 %xmm7, %xmm6",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm11, %xmm0",
+                "paddd 160({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm11, %xmm15",
+                "palignr $4, %xmm10, %xmm15",
+                "paddd %xmm15, %xmm12",
+                "sha256msg2 %xmm11, %xmm12",
+                "sha256msg1 %xmm11, %xmm10",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 11 (rounds 44-47)  A:MSG0=8,1=5,2=6,3=7 ----
+                "movdqa %xmm8, %xmm0",
+                "paddd 176({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm8, %xmm14",
+                "palignr $4, %xmm7, %xmm14",
+                "paddd %xmm14, %xmm5",
+                "sha256msg2 %xmm8, %xmm5",
+                "sha256msg1 %xmm8, %xmm7",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm12, %xmm0",
+                "paddd 176({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm12, %xmm15",
+                "palignr $4, %xmm11, %xmm15",
+                "paddd %xmm15, %xmm9",
+                "sha256msg2 %xmm12, %xmm9",
+                "sha256msg1 %xmm12, %xmm11",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 12 (rounds 48-51)  A:MSG0=5,1=6,2=7,3=8 ----
+                "movdqa %xmm5, %xmm0",
+                "paddd 192({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm5, %xmm14",
+                "palignr $4, %xmm8, %xmm14",
+                "paddd %xmm14, %xmm6",
+                "sha256msg2 %xmm5, %xmm6",
+                "sha256msg1 %xmm5, %xmm8",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm9, %xmm0",
+                "paddd 192({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm9, %xmm15",
+                "palignr $4, %xmm12, %xmm15",
+                "paddd %xmm15, %xmm10",
+                "sha256msg2 %xmm9, %xmm10",
+                "sha256msg1 %xmm9, %xmm12",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 13 (rounds 52-55)  A:MSG0=6 (msg2 only) ----
+                "movdqa %xmm6, %xmm0",
+                "paddd 208({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm6, %xmm14",
+                "palignr $4, %xmm5, %xmm14",
+                "paddd %xmm14, %xmm7",
+                "sha256msg2 %xmm6, %xmm7",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm10, %xmm0",
+                "paddd 208({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm10, %xmm15",
+                "palignr $4, %xmm9, %xmm15",
+                "paddd %xmm15, %xmm11",
+                "sha256msg2 %xmm10, %xmm11",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 14 (rounds 56-59)  A:MSG0=7 (msg2 only) ----
+                "movdqa %xmm7, %xmm0",
+                "paddd 224({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "movdqa %xmm7, %xmm14",
+                "palignr $4, %xmm6, %xmm14",
+                "paddd %xmm14, %xmm8",
+                "sha256msg2 %xmm7, %xmm8",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm11, %xmm0",
+                "paddd 224({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "movdqa %xmm11, %xmm15",
+                "palignr $4, %xmm10, %xmm15",
+                "paddd %xmm15, %xmm12",
+                "sha256msg2 %xmm11, %xmm12",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                // ---- group 15 (rounds 60-63)  no schedule ----
+                "movdqa %xmm8, %xmm0",
+                "paddd 240({k}), %xmm0",
+                "sha256rnds2 %xmm1, %xmm2",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm2, %xmm1",
+                "movdqa %xmm12, %xmm0",
+                "paddd 240({k}), %xmm0",
+                "sha256rnds2 %xmm3, %xmm4",
+                "pshufd $0x0E, %xmm0, %xmm0",
+                "sha256rnds2 %xmm4, %xmm3",
+                k = in(reg) K.0.as_ptr(),
+                inout("xmm1") abefa,
+                inout("xmm2") cdgha,
+                inout("xmm3") abefb,
+                inout("xmm4") cdghb,
+                inout("xmm5") a0 => _,
+                inout("xmm6") a1 => _,
+                inout("xmm7") a2 => _,
+                inout("xmm8") a3 => _,
+                inout("xmm9") b0 => _,
+                inout("xmm10") b1 => _,
+                inout("xmm11") b2 => _,
+                inout("xmm12") b3 => _,
+                out("xmm0") _,
+                out("xmm14") _,
+                out("xmm15") _,
+                options(att_syntax, nostack),
             );
 
             if active_a {
