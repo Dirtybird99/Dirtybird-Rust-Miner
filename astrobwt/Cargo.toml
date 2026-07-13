@@ -23,6 +23,11 @@ v114-cpp = ["v114", "libsais"]
 # Opt-in: per-stage rdtsc instrumentation (measurement only). Adds a separate
 # profiled pipeline; the production hot path is untouched.
 profiling = []
+# Experimental two-stream SHA-256 using x86_64 SHA-NI.
+shani2 = []
+# Opt-in AVX2 acceleration for the step-5 byte op loop. Runtime use additionally
+# requires the AVX2OPS environment variable and AVX2 CPU support.
+avx2ops = []
 
 [dependencies]
 # Safe `&[u32] -> &[u8]` reinterpretation for the fused SHA sink, so the
@@ -48,3 +53,17 @@ serde_json = { workspace = true }
 hex = { workspace = true }
 sha3.workspace = true
 salsa20 = "0.10"
+
+# The 2-way SHA-NI bench references the shani2-gated module; only build it when
+# that feature is on so default `cargo test` / builds stay green.
+[[example]]
+name = "sha256_x2_bench"
+required-features = ["shani2"]
+
+[[example]]
+name = "astrobwtv3_x2_bench"
+required-features = ["v114", "shani2"]
+
+[[example]]
+name = "x2_mt"
+required-features = ["v114", "shani2"]

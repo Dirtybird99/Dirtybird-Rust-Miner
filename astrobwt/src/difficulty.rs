@@ -4,6 +4,8 @@
 //! the difficulty-adjustment algorithm — for an existing block the target is
 //! derived from the block's own stored difficulty (`block_header.difficulty`).
 
+#[cfg(feature = "shani2")]
+use crate::astrobwtv3_x2;
 use crate::pow16::pow16;
 use crate::{astrobwtv3, astrobwtv3_with_scratch, AstroBwtScratch};
 use num_bigint::BigUint;
@@ -37,6 +39,23 @@ pub fn pow_hash_at_height_with_scratch(
         pow16(serialized)
     } else {
         astrobwtv3_with_scratch(serialized, scratch)
+    }
+}
+
+/// Height-aware two-lane PoW selection with caller-owned AstroBWT scratches.
+#[cfg(feature = "shani2")]
+pub fn pow_hash_at_height_x2(
+    work_a: &[u8],
+    work_b: &[u8],
+    height: u64,
+    hf2_height: u64,
+    sa: &mut AstroBwtScratch,
+    sb: &mut AstroBwtScratch,
+) -> ([u8; 32], [u8; 32]) {
+    if height < hf2_height {
+        (pow16(work_a), pow16(work_b))
+    } else {
+        astrobwtv3_x2(work_a, work_b, sa, sb)
     }
 }
 
@@ -257,5 +276,22 @@ mod tests {
             pow_hash_at_height_with_scratch(input, 481_600, MAJOR_HF2_HEIGHT_MAINNET, &mut scratch),
             pow_hash_at_height(input, 481_600, MAJOR_HF2_HEIGHT_MAINNET)
         );
+    }
+
+    #[cfg(feature = "shani2")]
+    #[test]
+    fn x2_height_selector_matches_two_one_way_lanes() {
+        let (a, b) = (b"height selector lane a", b"height selector lane b");
+        let (mut sa, mut sb) = (AstroBwtScratch::new(), AstroBwtScratch::new());
+
+        for height in [481_599, 481_600] {
+            assert_eq!(
+                pow_hash_at_height_x2(a, b, height, MAJOR_HF2_HEIGHT_MAINNET, &mut sa, &mut sb,),
+                (
+                    pow_hash_at_height(a, height, MAJOR_HF2_HEIGHT_MAINNET),
+                    pow_hash_at_height(b, height, MAJOR_HF2_HEIGHT_MAINNET),
+                )
+            );
+        }
     }
 }

@@ -21,10 +21,14 @@ pub mod difficulty;
 pub mod hashes;
 pub mod lpbuf;
 mod ops_generated;
+#[cfg(all(feature = "avx2ops", target_arch = "x86_64"))]
+mod ops_avx2;
 pub mod pow16;
 pub mod rc4;
 pub mod sais16;
 pub mod sais32;
+#[cfg(feature = "shani2")]
+pub mod sha256_x2;
 /// Slow O(n log² n) prefix-doubling suffix array, retained as the
 /// differential-fuzz oracle for the SA-IS ports ([`sais32`] / [`sais16`]).
 pub mod suffixarray;
@@ -49,6 +53,8 @@ mod v114_diff_tests;
 #[cfg(all(test, feature = "v114"))]
 mod v114_golden_tests;
 
+#[cfg(feature = "shani2")]
+pub use difficulty::pow_hash_at_height_x2;
 pub use difficulty::{
     check_pow_hash_big, pow_hash_at_height, pow_hash_at_height_with_scratch, verify_miniblock_pow,
     verify_miniblock_pow_v3, MAJOR_HF2_HEIGHT_MAINNET, MINIBLOCK_HIGHDIFF,
@@ -322,7 +328,7 @@ pub fn astrobwtv3_full(input: &[u8]) -> ([u8; 32], Debug) {
     (output, dbg)
 }
 
-pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [u8; 32] {
+fn astrobwtv3_prepare(input: &[u8], scratch: &mut AstroBwtScratch) -> usize {
     // --- prologue (steps 1–4) ---
     let sha_key: [u8; 32] = Sha256::digest(input).into();
     let mut step_3 = salsa20_keystream_256(&sha_key);
@@ -344,6 +350,8 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
     let mut v114_first_chunk = 0u32;
     #[cfg(feature = "v114")]
     let mut v114_chunk_count = 1u32;
+    #[cfg(all(feature = "avx2ops", target_arch = "x86_64"))]
+    let use_avx2ops = std::env::var_os("AVX2OPS").is_some();
     loop {
         tries += 1;
         let random_switcher = prev_lhash ^ lhash ^ tries;
@@ -357,6 +365,29 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
             pos2 = pos1.wrapping_add((pos2 - pos1) & 0x1f); // max update 32 bytes
         }
 
+        #[cfg(all(feature = "avx2ops", target_arch = "x86_64"))]
+        if use_avx2ops {
+            ops_avx2::apply_op_avx2(
+                op,
+                &mut step_3,
+                pos1,
+                pos2,
+                &mut lhash,
+                &mut prev_lhash,
+                &mut rc4,
+            );
+        } else {
+            ops_generated::apply_op(
+                op,
+                &mut step_3,
+                pos1,
+                pos2,
+                &mut lhash,
+                &mut prev_lhash,
+                &mut rc4,
+            );
+        }
+        #[cfg(not(all(feature = "avx2ops", target_arch = "x86_64")))]
         ops_generated::apply_op(
             op,
             &mut step_3,
@@ -445,6 +476,11 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
         }
         scratch.data[data_len..tail_end].fill(0);
     }
+    data_len
+}
+
+pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [u8; 32] {
+    let data_len = astrobwtv3_prepare(input, scratch);
     // --- steps 6 + 7: suffix array + final sha256 ---
     // Default: MATERIALIZE the descriptor suffix array into the large-paged
     // `scratch.sa` buffer, then SHA-256 it. The ~280 KB SA is the workload's
@@ -521,6 +557,60 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
     output
 }
 
+/// Hash two complete AstroBWTv3 pipelines with one two-stream final SHA-256.
+#[cfg(feature = "shani2")]
+pub fn astrobwtv3_x2(
+    input_a: &[u8],
+    input_b: &[u8],
+    sa: &mut AstroBwtScratch,
+    sb: &mut AstroBwtScratch,
+) -> ([u8; 32], [u8; 32]) {
+    #[cfg(not(feature = "v114"))]
+    return (
+        astrobwtv3_with_scratch(input_a, sa),
+        astrobwtv3_with_scratch(input_b, sb),
+    );
+
+    #[cfg(feature = "v114")]
+    {
+        let len_a = astrobwtv3_prepare(input_a, sa);
+        let len_b = astrobwtv3_prepare(input_b, sb);
+        let used_a = sais32::suffix_array_v114_into(
+            &sa.data,
+            len_a,
+            &sa.v114_markers,
+            &mut sa.v114_flags,
+            &mut sa.sa,
+        );
+        let used_b = sais32::suffix_array_v114_into(
+            &sb.data,
+            len_b,
+            &sb.v114_markers,
+            &mut sb.v114_flags,
+            &mut sb.sa,
+        );
+
+        if used_a && used_b {
+            return sha256_x2::sha256_x2(
+                bytemuck::cast_slice(&sa.sa),
+                bytemuck::cast_slice(&sb.sa),
+            );
+        }
+
+        let hash_a = if used_a {
+            sha256_sa_i32_le(&sa.sa)
+        } else {
+            sha256_sa_i32_le(&sais32::suffix_array(&sa.data[..len_a]))
+        };
+        let hash_b = if used_b {
+            sha256_sa_i32_le(&sb.sa)
+        } else {
+            sha256_sa_i32_le(&sais32::suffix_array(&sb.data[..len_b]))
+        };
+        (hash_a, hash_b)
+    }
+}
+
 fn astrobwtv3_hash_only(input: &[u8]) -> [u8; 32] {
     let mut scratch = AstroBwtScratch::new();
     astrobwtv3_with_scratch(input, &mut scratch)
@@ -537,8 +627,9 @@ pub fn dump_v114_case(input: &[u8]) -> (Vec<u8>, Vec<u8>, usize) {
     let mut scratch = AstroBwtScratch::new();
     let _ = astrobwtv3_with_scratch(input, &mut scratch);
     let mut flags: Vec<u8> = Vec::new();
-    let flag_len = crate::sais32::build_v114_stage5_flags(&scratch.v114_markers, logical_len, &mut flags)
-        .unwrap_or(0) as usize;
+    let flag_len =
+        crate::sais32::build_v114_stage5_flags(&scratch.v114_markers, logical_len, &mut flags)
+            .unwrap_or(0) as usize;
     flags.truncate(flag_len);
     let data = scratch.data[..logical_len].to_vec();
     (data, flags, logical_len)
@@ -591,7 +682,13 @@ pub fn astrobwtv3_stage_cycles(input: &[u8], scratch: &mut AstroBwtScratch) -> [
             pos2 = pos1.wrapping_add((pos2 - pos1) & 0x1f);
         }
         ops_generated::apply_op(
-            op, &mut step_3, pos1, pos2, &mut lhash, &mut prev_lhash, &mut rc4,
+            op,
+            &mut step_3,
+            pos1,
+            pos2,
+            &mut lhash,
+            &mut prev_lhash,
+            &mut rc4,
         );
         let p2 = pos2 as usize;
         let diff = step_3[pos1 as usize].wrapping_sub(step_3[pos2 as usize]);
@@ -715,6 +812,38 @@ pub fn astrobwtv3(input: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "shani2")]
+    #[test]
+    fn astrobwtv3_x2_matches_two_materialized_hashes() {
+        std::env::set_var("DERO_MATERIALIZE", "1");
+        let (mut xa, mut xb) = (AstroBwtScratch::new(), AstroBwtScratch::new());
+        let (mut one_a, mut one_b) = (AstroBwtScratch::new(), AstroBwtScratch::new());
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            rng ^= rng >> 12;
+            rng ^= rng << 25;
+            rng ^= rng >> 27;
+            rng = rng.wrapping_mul(0x2545_f491_4f6c_dd1d);
+            rng
+        };
+
+        for case in 0..2_000 {
+            let mut a = vec![0u8; (next() % 257) as usize];
+            let mut b = vec![0u8; (next() % 257) as usize];
+            for chunk in a.chunks_mut(8).chain(b.chunks_mut(8)) {
+                let bytes = next().to_le_bytes();
+                chunk.copy_from_slice(&bytes[..chunk.len()]);
+            }
+
+            let got = astrobwtv3_x2(&a, &b, &mut xa, &mut xb);
+            let want = (
+                astrobwtv3_with_scratch(&a, &mut one_a),
+                astrobwtv3_with_scratch(&b, &mut one_b),
+            );
+            assert_eq!(got, want, "case {case}, lengths ({}, {})", a.len(), b.len());
+        }
+    }
+
     /// DIAGNOSTIC: resolve the "zero tail" contradiction. Agent's standalone
     /// harness says the descriptor SA is byte-exact when the 3 tail bytes past
     /// data_len are zero; our production fuzz says it diverges ~1.4%. Inspect the
@@ -756,17 +885,31 @@ mod tests {
             let mut flags: Vec<u8> = Vec::new();
             let mut sa = crate::lpbuf::LpVec::<i32>::with_capacity(0);
             let used = crate::sais32::suffix_array_v114_into(
-                &scratch.data, dl, &scratch.v114_markers, &mut flags, &mut sa,
+                &scratch.data,
+                dl,
+                &scratch.v114_markers,
+                &mut flags,
+                &mut sa,
             );
-            eprintln!("  as-is        : used={used} sa==libsais={}", used && sa[..] == want[..]);
+            eprintln!(
+                "  as-is        : used={used} sa==libsais={}",
+                used && sa[..] == want[..]
+            );
             let end = (dl + 64).min(scratch.data.len());
             for b in &mut scratch.data[dl..end] {
                 *b = 0;
             }
             let used2 = crate::sais32::suffix_array_v114_into(
-                &scratch.data, dl, &scratch.v114_markers, &mut flags, &mut sa,
+                &scratch.data,
+                dl,
+                &scratch.v114_markers,
+                &mut flags,
+                &mut sa,
             );
-            eprintln!("  zeroed-tail  : used={used2} sa==libsais={}", used2 && sa[..] == want[..]);
+            eprintln!(
+                "  zeroed-tail  : used={used2} sa==libsais={}",
+                used2 && sa[..] == want[..]
+            );
             shown += 1;
             if shown >= 5 {
                 break;
@@ -845,7 +988,10 @@ mod tests {
             }
             let fused = astrobwtv3_with_scratch(&input, &mut scratch);
             let (reference, _) = astrobwtv3_full(&input);
-            assert_eq!(fused, reference, "fused v114 != reference for input {input:?}");
+            assert_eq!(
+                fused, reference,
+                "fused v114 != reference for input {input:?}"
+            );
         }
     }
 
@@ -924,7 +1070,10 @@ mod tests {
         // The actionable question: can a cheap trailing-zero gate catch ALL
         // divergences? If diverged_no_tz == 0, gating on trailing zeros is a
         // sufficient correctness guard.
-        assert_eq!(canon_mismatch, 0, "libsais must equal pure-Rust canonical SA");
+        assert_eq!(
+            canon_mismatch, 0,
+            "libsais must equal pure-Rust canonical SA"
+        );
         assert_eq!(
             diverged_no_tz, 0,
             "a divergence with NO trailing zero defeats the trailing-zero gate"
