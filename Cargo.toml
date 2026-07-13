@@ -22,6 +22,8 @@ libsais = ["dero-astrobwt/libsais"]
 # Opt-in descriptor suffix-array backend (pure Rust, astrobwt/src/v114.rs).
 # It depends on libsais as a correctness-preserving fallback. No C++ toolchain.
 v114 = ["dero-astrobwt/v114"]
+shani2 = ["dero-astrobwt/shani2"]
+avx2ops = ["dero-astrobwt/avx2ops"]
 # Dev/verification: additionally compile the vendored C++ this was ported from,
 # so `DERO_V114_CPP=1` can select it for head-to-head A/B (see v114_ab.ps1).
 # Requires clang-cl on PATH.
@@ -38,7 +40,8 @@ serde_json = { workspace = true }
 rand = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 sha1 = "0.10"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = "0.0.2-alpha"
 
 [workspace]
 resolver = "2"

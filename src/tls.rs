@@ -63,8 +63,14 @@ fn to_io<E: std::fmt::Debug>(e: E) -> io::Error {
 
 /// rustls client config with the no-op certificate verifier installed.
 pub fn no_verify_client_config() -> io::Result<ClientConfig> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let schemes = provider.signature_verification_algorithms.supported_schemes();
+    // Pure-Rust crypto provider (RustCrypto) — replaces `ring` (C + asm) so the
+    // whole binary links no C. This TLS path is already cert-unverified (see
+    // `NoVerify` / the module doc); the provider supplies only the handshake
+    // key-exchange + AEAD ciphers. Zero effect on the hash path.
+    let provider = Arc::new(rustls_rustcrypto::provider());
+    let schemes = provider
+        .signature_verification_algorithms
+        .supported_schemes();
     ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(to_io)
@@ -84,7 +90,10 @@ pub type TlsTcpStream = rustls::StreamOwned<ClientConnection, TcpStream>;
 /// websocket upgrade to poll reads.
 pub fn connect_tls(host_port: &str, timeout: Duration) -> io::Result<TlsTcpStream> {
     let addrs: Vec<_> = host_port.to_socket_addrs()?.collect();
-    let mut last_err = io::Error::new(io::ErrorKind::NotFound, format!("no addresses for {host_port}"));
+    let mut last_err = io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("no addresses for {host_port}"),
+    );
     let mut sock = None;
     for addr in addrs {
         match TcpStream::connect_timeout(&addr, timeout) {
@@ -102,7 +111,10 @@ pub fn connect_tls(host_port: &str, timeout: Duration) -> io::Result<TlsTcpStrea
 
     // SNI: the server never checks it (random self-signed cert) and we never
     // verify, so any name works — use the real host when it parses.
-    let host = host_port.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_port);
+    let host = host_port
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(host_port);
     let server_name = ServerName::try_from(host.to_string())
         .or_else(|_| ServerName::try_from("dero.getwork".to_string()))
         .map_err(to_io)?;
