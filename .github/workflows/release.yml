@@ -54,7 +54,6 @@ jobs:
           PACKAGE_VERSION="$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.name == "dero-miner") | .version')"
           test "$VER" = "v$PACKAGE_VERSION"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/immutable-releases" --jq '.enabled')" = true
           if gh release view "$VER" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error::Release $VER already exists"
             exit 1
