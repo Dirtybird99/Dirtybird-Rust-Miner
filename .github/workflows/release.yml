@@ -46,10 +46,10 @@ jobs:
           set -euo pipefail
           VER="$GITHUB_REF_NAME"
           [[ "$VER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          TAG_REF="refs/tags/$VER"
-          test "$(git cat-file -t "$TAG_REF")" = tag
-          test "$(git rev-parse HEAD)" = "$(git rev-parse "$TAG_REF^{}")"
-          TAG_SHA="$(git rev-parse "$TAG_REF")"
+          TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VER" --jq '.object.sha')"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VER" --jq '.object.type')" = tag
+          test "$(git rev-parse HEAD)" = \
+            "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_SHA" --jq '.object.sha')"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_SHA" --jq '.verification.verified')" = true
           PACKAGE_VERSION="$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.name == "dero-miner") | .version')"
