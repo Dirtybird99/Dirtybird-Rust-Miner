@@ -473,6 +473,79 @@ fn format_status_line(
     line
 }
 
+fn format_terminal_status_line(
+    shared: &Shared,
+    rate: f64,
+    average: f64,
+    uptime: Duration,
+    testnet: bool,
+    measured_width: Option<usize>,
+) -> String {
+    let width = status_width_budget(measured_width);
+    let full = format_status_line(shared, rate, average, uptime, testnet);
+    if full.len() <= width {
+        return full;
+    }
+
+    let compact = format!(
+        "[DIRTYBIRD] {rate:.2} KH/s H:{} M:{} B:{} R:{}",
+        shared.our_height.load(Ordering::Relaxed),
+        shared.mini_block_counter.load(Ordering::Relaxed),
+        shared.block_counter.load(Ordering::Relaxed),
+        shared.rejected.load(Ordering::Relaxed),
+    );
+    if compact.len() <= width {
+        return compact;
+    }
+
+    let mut minimal = format!(
+        "{rate:.2} KH/s H:{}",
+        shared.our_height.load(Ordering::Relaxed)
+    );
+    if minimal.len() > width {
+        minimal.truncate(width);
+    }
+    minimal
+}
+
+fn status_width_budget(measured_width: Option<usize>) -> usize {
+    measured_width.unwrap_or(40).saturating_sub(1)
+}
+
+#[cfg(unix)]
+fn terminal_width() -> Option<usize> {
+    // SAFETY: winsize is a plain C output struct and STDERR_FILENO remains valid
+    // for the duration of this call.
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    if unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) } == 0
+        && size.ws_col > 0
+    {
+        Some(size.ws_col.into())
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn terminal_width() -> Option<usize> {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO, STD_ERROR_HANDLE,
+    };
+
+    let mut info = CONSOLE_SCREEN_BUFFER_INFO::default();
+    // SAFETY: info points to initialized writable storage and the standard
+    // error handle is borrowed only for this query.
+    if unsafe { GetConsoleScreenBufferInfo(GetStdHandle(STD_ERROR_HANDLE), &mut info) } == 0 {
+        return None;
+    }
+    usize::try_from(i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1).ok()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminal_width() -> Option<usize> {
+    None
+}
+
 /// Emit a 1 Hz status repaint to a terminal or complete records to a log.
 fn stats_loop(shared: &Shared, testnet: bool) {
     let started_at = Instant::now();
@@ -496,14 +569,20 @@ fn stats_loop(shared: &Shared, testnet: bool) {
         let average = counter
             .checked_sub(started_hashes)
             .map_or(0.0, |hashes| rate_khs(hashes, uptime));
-        let line = format_status_line(shared, rate, average, uptime, testnet);
         if tty {
-            let pad = last_len.saturating_sub(line.len());
+            let width = terminal_width();
+            let line = format_terminal_status_line(shared, rate, average, uptime, testnet, width);
+            let pad = last_len
+                .min(status_width_budget(width))
+                .saturating_sub(line.len());
             eprint!("\r{line}{}", " ".repeat(pad));
             let _ = io::stderr().flush();
             last_len = line.len();
         } else {
-            eprintln!("{line}");
+            eprintln!(
+                "{}",
+                format_status_line(shared, rate, average, uptime, testnet)
+            );
         }
     }
 }
@@ -663,6 +742,56 @@ mod tests {
             format_status_line(&shared, 1.234, 0.987, Duration::from_secs(1), true),
             "[DIRTYBIRD] 1.23 KH/s (0.99 KH/s avg) | Height:2345678 | \
              Miniblocks:12 | Blocks:3 | REJ:1 | Diff:312M | 00:00:01 | TESTNET"
+        );
+    }
+
+    #[test]
+    fn terminal_status_uses_the_longest_layout_that_fits() {
+        let shared = Shared::new();
+        shared.our_height.store(2_345_678, Ordering::Relaxed);
+        shared.mini_block_counter.store(12, Ordering::Relaxed);
+        shared.block_counter.store(3, Ordering::Relaxed);
+        shared.rejected.store(1, Ordering::Relaxed);
+        shared.difficulty.store(312_979_370, Ordering::Relaxed);
+        let args = (1.234, 0.987, Duration::from_secs(3_723), false);
+
+        let full = format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(200));
+        assert_eq!(
+            full,
+            format_status_line(&shared, args.0, args.1, args.2, args.3)
+        );
+
+        let compact =
+            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(56));
+        assert_eq!(compact, "[DIRTYBIRD] 1.23 KH/s H:2345678 M:12 B:3 R:1");
+        assert!(compact.len() <= 56);
+        assert_eq!(
+            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(80)),
+            compact
+        );
+
+        let minimal =
+            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(40));
+        assert_eq!(minimal, "1.23 KH/s H:2345678");
+        assert_eq!(
+            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, None),
+            minimal
+        );
+
+        shared.our_height.store(u64::MAX, Ordering::Relaxed);
+        shared.mini_block_counter.store(u64::MAX, Ordering::Relaxed);
+        let narrow =
+            format_terminal_status_line(&shared, 123_456_789.12, args.1, args.2, args.3, Some(12));
+        assert_eq!(narrow.len(), 11);
+        assert_eq!(narrow, "123456789.1");
+        assert_eq!(
+            format_terminal_status_line(&shared, 123_456_789.12, args.1, args.2, args.3, None)
+                .len(),
+            39
+        );
+        assert!(
+            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(0))
+                .is_empty()
         );
     }
 

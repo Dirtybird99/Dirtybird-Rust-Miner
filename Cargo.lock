@@ -366,6 +366,7 @@ dependencies = [
  "dero-astrobwt",
  "dero-protocol",
  "hex",
+ "libc",
  "num-bigint",
  "num-traits",
  "rand",
@@ -374,6 +375,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
