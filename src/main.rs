@@ -31,7 +31,7 @@ mod tls;
 mod worker;
 mod ws;
 
-use std::io::{self, BufRead, Write as _};
+use std::io::{self, BufRead, IsTerminal, Write as _};
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -395,71 +395,116 @@ fn getwork(
     }
 }
 
-/// Go's local-hashrate string (miner.go:253-263): MH/s and KH/s with 3
-/// decimals, plain H/s otherwise; empty when not mining.
-fn mining_speed_string(speed: f64) -> String {
-    if speed > 1_000_000.0 {
-        format!("MINING @ {:.3} MH/s", speed as f32 / 1_000_000.0)
-    } else if speed > 1_000.0 {
-        format!("MINING @ {:.3} KH/s", speed as f32 / 1_000.0)
-    } else if speed > 0.0 {
-        format!("MINING @ {speed:.0} H/s")
-    } else {
-        String::new()
+const HASHRATE_WINDOW_SLOTS: usize = 10;
+
+#[derive(Clone, Copy)]
+struct HashratePoint {
+    at: Instant,
+    hashes: u64,
+}
+
+struct HashrateWindow {
+    points: [HashratePoint; HASHRATE_WINDOW_SLOTS],
+    next: usize,
+}
+
+impl HashrateWindow {
+    fn new(at: Instant, hashes: u64) -> Self {
+        Self {
+            points: [HashratePoint { at, hashes }; HASHRATE_WINDOW_SLOTS],
+            next: 0,
+        }
+    }
+
+    fn sample(&mut self, at: Instant, hashes: u64) -> f64 {
+        let old = self.points[self.next];
+        self.points[self.next] = HashratePoint { at, hashes };
+        self.next = (self.next + 1) % self.points.len();
+        hashes.checked_sub(old.hashes).map_or(0.0, |delta| {
+            rate_khs(delta, at.saturating_duration_since(old.at))
+        })
     }
 }
 
-/// Compact scalar formatting for the daemon's exact job difficulty.
+fn rate_khs(hashes: u64, elapsed: Duration) -> f64 {
+    if elapsed.is_zero() {
+        0.0
+    } else {
+        hashes as f64 / elapsed.as_secs_f64() / 1_000.0
+    }
+}
+
+/// Humanize difficulty using the compact DIRTYBIRD family units.
 fn difficulty_string(difficulty: u64) -> String {
-    if difficulty > 1_000_000_000_000 {
-        format!("{:.3}T", difficulty as f64 / 1e12)
-    } else if difficulty > 1_000_000_000 {
-        format!("{:.3}G", difficulty as f64 / 1e9)
-    } else if difficulty > 1_000_000 {
-        format!("{:.3}M", difficulty as f64 / 1e6)
-    } else if difficulty > 1_000 {
-        format!("{:.3}K", difficulty as f64 / 1e3)
+    if difficulty >= 1_000_000_000 {
+        format!("{}G", difficulty / 1_000_000_000)
+    } else if difficulty >= 1_000_000 {
+        format!("{}M", difficulty / 1_000_000)
+    } else if difficulty >= 1_000 {
+        format!("{}K", difficulty / 1_000)
     } else {
         difficulty.to_string()
     }
 }
 
-/// 1 Hz repaint of the status line (the Go readline prompt, miner.go:225-294;
-/// plain `\r` stderr line here — no readline dep).
+fn format_status_line(
+    shared: &Shared,
+    rate: f64,
+    average: f64,
+    uptime: Duration,
+    testnet: bool,
+) -> String {
+    let seconds = uptime.as_secs();
+    let mut line = format!(
+        "[DIRTYBIRD] {rate:.2} KH/s ({average:.2} KH/s avg) | Height:{} | \
+         Miniblocks:{} | Blocks:{} | REJ:{} | Diff:{} | {:02}:{:02}:{:02}",
+        shared.our_height.load(Ordering::Relaxed),
+        shared.mini_block_counter.load(Ordering::Relaxed),
+        shared.block_counter.load(Ordering::Relaxed),
+        shared.rejected.load(Ordering::Relaxed),
+        difficulty_string(shared.difficulty.load(Ordering::Relaxed)),
+        seconds / 3_600,
+        seconds / 60 % 60,
+        seconds % 60,
+    );
+    if testnet {
+        line.push_str(" | TESTNET");
+    }
+    line
+}
+
+/// Emit a 1 Hz status repaint to a terminal or complete records to a log.
 fn stats_loop(shared: &Shared, testnet: bool) {
-    let mut last_counter = 0u64;
-    let mut last_counter_time = Instant::now();
-    let mut last_height = u64::MAX;
+    let started_at = Instant::now();
+    let started_hashes = shared.counter.load(Ordering::Relaxed);
+    let mut rates = HashrateWindow::new(started_at, started_hashes);
+    let tty = io::stderr().is_terminal();
     let mut last_len = 0usize;
     loop {
         if shared.exit.load(Ordering::Relaxed) {
             return;
         }
-        let counter = shared.counter.load(Ordering::Relaxed);
-        let height = shared.our_height.load(Ordering::Relaxed);
-        if counter != last_counter || height != last_height {
-            let elapsed = last_counter_time.elapsed().as_secs_f64();
-            let speed = (counter - last_counter) as f64 / elapsed.max(1e-9);
-            last_counter = counter;
-            last_counter_time = Instant::now();
-            last_height = height;
+        std::thread::sleep(Duration::from_secs(1));
+        if shared.exit.load(Ordering::Relaxed) {
+            return;
+        }
 
-            let line = format!(
-                "DERO Miner: Height {} BLOCKS {} MiniBlocks {} Rejected {} DIFF {} {}{}>>>",
-                height,
-                shared.block_counter.load(Ordering::Relaxed),
-                shared.mini_block_counter.load(Ordering::Relaxed),
-                shared.rejected.load(Ordering::Relaxed),
-                difficulty_string(shared.difficulty.load(Ordering::Relaxed)),
-                mining_speed_string(speed),
-                if testnet { " TESTNET" } else { "" },
-            );
+        let now = Instant::now();
+        let counter = shared.counter.load(Ordering::Relaxed);
+        let uptime = now.saturating_duration_since(started_at);
+        let rate = rates.sample(now, counter);
+        let average = counter
+            .checked_sub(started_hashes)
+            .map_or(0.0, |hashes| rate_khs(hashes, uptime));
+        let line = format_status_line(shared, rate, average, uptime, testnet);
+        if tty {
             let pad = last_len.saturating_sub(line.len());
             eprint!("\r{line}{}", " ".repeat(pad));
             let _ = io::stderr().flush();
             last_len = line.len();
+        } else {
+            eprintln!("{line}");
         }
-        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -530,7 +575,6 @@ fn command_loop(shared: &Shared) {
 mod tests {
     use super::*;
 
-    /// Local rate stays Go-compatible; difficulty is an unmodified scalar.
     #[test]
     fn short_benchmark_flags_parse() {
         let cli = Cli::try_parse_from([
@@ -544,10 +588,7 @@ mod tests {
         ])
         .expect("short miner flags must parse");
 
-        assert_eq!(
-            cli.daemon_rpc_address.as_deref(),
-            Some("127.0.0.1:10100")
-        );
+        assert_eq!(cli.daemon_rpc_address.as_deref(), Some("127.0.0.1:10100"));
         assert_eq!(
             cli.wallet_address.as_deref(),
             Some("dero1qypw4nalj2u5q9wfkzeajqw6udlvdrm5m6n7gjzvwm2st2k7fttuqqgwtmndv")
@@ -556,18 +597,83 @@ mod tests {
     }
 
     #[test]
-    fn rate_and_difficulty_strings() {
-        assert_eq!(mining_speed_string(0.0), "");
-        assert_eq!(mining_speed_string(512.0), "MINING @ 512 H/s");
-        assert_eq!(mining_speed_string(1_500.0), "MINING @ 1.500 KH/s");
-        assert_eq!(mining_speed_string(2_500_000.0), "MINING @ 2.500 MH/s");
+    fn hashrate_window_uses_elapsed_time_and_guards_resets() {
+        let start = Instant::now();
+        let baseline = 42_000;
+        let mut steady = HashrateWindow::new(start, baseline);
+        for second in 1..=11 {
+            assert_eq!(
+                steady.sample(
+                    start + Duration::from_secs(second),
+                    baseline + second * 1_000,
+                ),
+                1.0
+            );
+        }
 
+        let mut irregular = HashrateWindow::new(start, baseline);
+        assert_eq!(
+            irregular.sample(start + Duration::from_secs(2), baseline + 1_000),
+            0.5
+        );
+        assert_eq!(rate_khs(1_000, Duration::ZERO), 0.0);
+        assert_eq!(
+            irregular.sample(start + Duration::from_secs(3), baseline - 1),
+            0.0
+        );
+
+        let mut stalled = HashrateWindow::new(start, baseline);
+        for second in 1..=5 {
+            stalled.sample(
+                start + Duration::from_secs(second),
+                baseline + second * 1_000,
+            );
+        }
+        for second in 6..=15 {
+            let rate = stalled.sample(start + Duration::from_secs(second), baseline + 5_000);
+            if second == 10 {
+                assert_eq!(rate, 0.5);
+            } else if second == 15 {
+                assert_eq!(rate, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn status_line_matches_dirtybird_family_format() {
+        let shared = Shared::new();
+        shared.our_height.store(2_345_678, Ordering::Relaxed);
+        shared.mini_block_counter.store(12, Ordering::Relaxed);
+        shared.block_counter.store(3, Ordering::Relaxed);
+        shared.rejected.store(1, Ordering::Relaxed);
+        shared.difficulty.store(312_979_370, Ordering::Relaxed);
+
+        assert_eq!(
+            format_status_line(
+                &shared,
+                1.234,
+                0.987,
+                Duration::from_secs(100 * 3_600 + 2 * 60 + 3),
+                false,
+            ),
+            "[DIRTYBIRD] 1.23 KH/s (0.99 KH/s avg) | Height:2345678 | \
+             Miniblocks:12 | Blocks:3 | REJ:1 | Diff:312M | 100:02:03"
+        );
+        assert_eq!(
+            format_status_line(&shared, 1.234, 0.987, Duration::from_secs(1), true),
+            "[DIRTYBIRD] 1.23 KH/s (0.99 KH/s avg) | Height:2345678 | \
+             Miniblocks:12 | Blocks:3 | REJ:1 | Diff:312M | 00:00:01 | TESTNET"
+        );
+    }
+
+    #[test]
+    fn difficulty_strings_use_integer_family_units() {
         assert_eq!(difficulty_string(0), "0");
         assert_eq!(difficulty_string(999), "999");
-        assert_eq!(difficulty_string(1_500), "1.500K");
-        assert_eq!(difficulty_string(312_979_370), "312.979M");
-        assert_eq!(difficulty_string(2_000_000_000), "2.000G");
-        assert_eq!(difficulty_string(3_500_000_000_000), "3.500T");
+        assert_eq!(difficulty_string(1_500), "1K");
+        assert_eq!(difficulty_string(312_979_370), "312M");
+        assert_eq!(difficulty_string(2_000_000_000), "2G");
+        assert_eq!(difficulty_string(3_500_000_000_000), "3500G");
     }
 
     #[test]
