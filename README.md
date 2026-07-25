@@ -73,6 +73,9 @@ To also diff the Rust SA against the C++ it was ported from, see §3 of
 
 ## Usage
 
+Prebuilt binaries and their checksums are available from
+[GitHub Releases](https://github.com/Dirtybird99/Dirtybird-Rust-Miner/releases).
+
 ```sh
 dero-miner -w <dero-address> -d <daemon:port> -t <threads>
 # offline diagnostics:
