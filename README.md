@@ -84,7 +84,26 @@ dero-miner --sustained -t 24 --secs 30  # honest fixed-window hashrate
 ```
 
 `-w` is the reward address (a public DERO address), `-d` the daemon/pool getwork endpoint
-(default `minernode1.dero.live:10100`), `-t` the thread count (default: all logical CPUs).
+(default `dero-node.mysrv.cloud:10100`), `-t` the thread count (default: all logical CPUs).
+
+## Android (Termux)
+
+Requires a 64-bit ARM (aarch64) Android device, [Termux](https://termux.dev/), and release
+v0.2.5 or newer (earlier arm64 binaries are non-PIE, which Android refuses to run):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Dirtybird99/Dirtybird-Rust-Miner/main/scripts/termux-setup.sh | bash
+```
+
+The installer downloads `Dirtybird-Rust-Miner-arm64-v*.tar.gz` from the latest release,
+verifies it against `SHA256SUMS.txt`, prompts for daemon/wallet/threads (persisted; re-run
+with `--reconfigure` to change, `--update` to upgrade, `--uninstall` to remove), takes a
+wake-lock so Android Doze doesn't pause mining, and auto-restarts the miner if it exits.
+
+Take the pool (option 1, the default) on a phone. The solo nodes pay out at network
+difficulty, which at phone hashrates means hours between rewards — the counters sit at
+zero long enough to look broken, even though nothing is wrong. Install `termux-api`
+(plus the Termux:API app) for wake-lock and battery-status support.
 
 ## Layout
 
