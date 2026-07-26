@@ -115,16 +115,17 @@ done
 [ "$load_fail" -eq 0 ] || exit 1
 echo "PT_LOAD p_align >= 0x4000 (16 KB-page safe)"
 
-# DT_NEEDED: record what the binary links against. TODO(observe-then-gate):
-# the allowlist below goes live only after reading the real list from the CI
-# dry-run log -- guessing it risks the release job rejecting a legitimate
-# entry at tag time.
+# DT_NEEDED allowlist: catches the libc++_shared.so class of bug where the
+# artifact would need an .so that is neither on a stock device nor in the
+# tarball. The list is what the CI dry-run OBSERVED for rustc 1.97 + NDK r29
+# (libdl/libm/libc, all core bionic, present on every device) -- extend it
+# only from a dry-run log, never from a guess.
 mapfile -t needed < <(readelf -dW "$BIN" |
   sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
 echo "DT_NEEDED: ${needed[*]:-<none>}"
-# for so in "${needed[@]}"; do
-#   case "$so" in
-#     libc.so|libm.so|libdl.so) ;;
-#     *) echo "FAIL: unexpected DT_NEEDED '$so' -- not on a stock device or not shipped" >&2; exit 1 ;;
-#   esac
-# done
+for so in "${needed[@]}"; do
+  case "$so" in
+    libc.so|libm.so|libdl.so) ;;
+    *) echo "FAIL: unexpected DT_NEEDED '$so' -- not on a stock device or not shipped" >&2; exit 1 ;;
+  esac
+done
