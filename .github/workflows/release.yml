@@ -1,9 +1,10 @@
 name: Release
 
-# Builds the pure-Rust miner for Windows x64 + Linux x64/aarch64 (static musl) and
-# publishes a GitHub Release with the archives + SHA256SUMS. Cross-compiles every
-# target from one Linux runner via cargo-zigbuild. Plain `--release` (no PGO): the
-# SHA-NI 2-way path is selected at runtime, so the binaries stay portable.
+# Builds the pure-Rust miner for Windows x64 + Linux x64/aarch64 (static musl,
+# arm64 as static-PIE so Android/Termux can exec it) and publishes a GitHub
+# Release with the archives + SHA256SUMS. Cross-compiles every target from one
+# Linux runner via cargo-zigbuild. Plain `--release` (no PGO): the SHA-NI 2-way
+# path is selected at runtime, so the binaries stay portable.
 
 on:
   push:
@@ -67,6 +68,17 @@ jobs:
       - name: Build all platforms + package
         env:
           VER: ${{ github.ref_name }}
+          # Android 10+ refuses ET_EXEC ("has unexpected e_type: 2"), so the
+          # arm64 binary must be a static-PIE. zig cc silently ignores clang's
+          # -static-pie (it maps to a no-op in zig 0.14.1 -- that is exactly how
+          # rustc's own static-PIE request for musl targets gets dropped) but
+          # honors plain -pie, and links musl targets statically with rcrt1.o,
+          # so this yields ET_DYN with no PT_INTERP. relocation-model=pic is the
+          # target default, pinned because PIE links require PIC objects. Note:
+          # a target-scoped RUSTFLAGS var REPLACES any global RUSTFLAGS for this
+          # target; none is set today, but duplicate it here if one is added.
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: >-
+            -C relocation-model=pic -C link-arg=-pie
         run: |
           set -euo pipefail
           NAME="Dirtybird-Rust-Miner"
@@ -104,6 +116,11 @@ jobs:
           ( cd "$DIST" && sha256sum *.zip *.tar.gz > SHA256SUMS.txt )
           echo "=== dist ==="; ls -1 "$DIST"
 
+      - name: Install qemu-user (arm64 smoke test)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+
       - name: Verify binaries and checksums
         run: |
           set -euo pipefail
@@ -115,6 +132,16 @@ jobs:
             -C "$RUNNER_TEMP/rust-miner-smoke"
           BIN="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-amd64-$VER/dero-miner"
           test "$("$BIN" --version)" = "dero-miner ${VER#v}"
+
+          # ---- arm64: static-PIE policy + first-ever execution of the artifact ----
+          # The od/readelf asserts are the Android gate (qemu runs ET_EXEC fine);
+          # the qemu run proves the shipped binary actually starts (musl init,
+          # TLS setup). Both are required, on the packaged artifact, pre-publish.
+          tar -xzf "Dirtybird-Rust-Miner-arm64-$VER.tar.gz" \
+            -C "$RUNNER_TEMP/rust-miner-smoke"
+          ARM="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-arm64-$VER/dero-miner"
+          ../scripts/verify-arm64-elf.sh "$ARM"
+          test "$(qemu-aarch64-static "$ARM" --version)" = "dero-miner ${VER#v}"
 
       - name: Publish GitHub Release
         env:

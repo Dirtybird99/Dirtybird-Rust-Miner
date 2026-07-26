@@ -36,3 +36,44 @@ jobs:
           mapfile -t scripts < <(git ls-files '*.sh')
           ((${#scripts[@]} == 0)) || bash -n "${scripts[@]}"
           ((${#scripts[@]} == 0)) || shellcheck --severity=error "${scripts[@]}"
+
+  # Dry-run of the release workflow's arm64 build: same toolchain pins, same
+  # target-scoped RUSTFLAGS, same ELF asserts, and a QEMU execution smoke test.
+  # release.yml only fires on signed tags and releases are immutable, so this
+  # job is where the static-PIE contract is proven BEFORE any tag exists; the
+  # tag run then repeats known-good steps. Keep the env var and the verify
+  # steps byte-identical to release.yml.
+  linux-arm64-static-pie:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.14.1
+      - uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2
+        with:
+          tool: cargo-zigbuild@0.23.0
+
+      - name: Build arm64 static-PIE
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: >-
+            -C relocation-model=pic -C link-arg=-pie
+        run: |
+          rustup target add aarch64-unknown-linux-musl
+          cargo zigbuild --locked --release -p dero-miner --features v114 \
+            --target aarch64-unknown-linux-musl --bin dero-miner
+
+      - name: Verify static-PIE + run under QEMU
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+          BIN=target/aarch64-unknown-linux-musl/release/dero-miner
+          scripts/verify-arm64-elf.sh "$BIN"
+          PKGVER="$(cargo metadata --locked --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "dero-miner") | .version')"
+          test "$(qemu-aarch64-static "$BIN" --version)" = "dero-miner $PKGVER"
