@@ -301,14 +301,36 @@ else
     fi
 
     # Exec probe: catches a corrupt or incompatible download before mining.
-    # Keep the probe's stderr — bionic's linker64 states the exact reason
-    # (v0.2.5's "TLS segment is underaligned" was eaten by a 2>/dev/null
-    # here and cost a full debugging round trip).
-    if ! PROBE_ERR="$("./$BINARY_NAME" --version 2>&1 >/dev/null)"; then
-        err "$BINARY_NAME failed to execute on this device."
+    # Keep the probe's stderr AND its wait status. bionic's linker64 states a
+    # reason for a clean abort (v0.2.5's "TLS segment is underaligned"), but a
+    # crash inside the loader prints NOTHING at all — v0.2.6 died as a silent
+    # SIGSEGV — so the signal number is the only evidence there is, and the
+    # `if ! VAR="$(...)"` form discards it. Hence the set +e bracket.
+    set +e
+    PROBE_ERR="$("./$BINARY_NAME" --version 2>&1 >/dev/null)"
+    PROBE_RC=$?
+    set -e
+    if [ "$PROBE_RC" -ne 0 ]; then
+        err "$BINARY_NAME failed to execute on this device (exit $PROBE_RC)."
+        if [ "$PROBE_RC" -gt 128 ]; then
+            SIG=$((PROBE_RC - 128))
+            err "Killed by signal $SIG ($(kill -l "$SIG" 2>/dev/null || echo '?'))."
+        fi
         [ -n "$PROBE_ERR" ] && printf '%s\n' "$PROBE_ERR" >&2
         err "Device: $(uname -rm) / pagesize $(getconf PAGESIZE 2>/dev/null || echo '?')"
+        err "ABI: $(getprop ro.product.cpu.abi 2>/dev/null || echo '?') / SDK $(getprop ro.build.version.sdk 2>/dev/null || echo '?')"
         err "Model: $(getprop ro.product.model 2>/dev/null || echo '?') / Android $(getprop ro.build.version.release 2>/dev/null || echo '?')"
+        # An app can read its OWN crash-buffer entries; the tombstone names the
+        # signal, fault address, and faulting mapping — exactly what separates
+        # a loader-level crash from a miner bug. timeout guards a wedged logcat.
+        if command -v logcat >/dev/null 2>&1; then
+            CRASH="$(timeout 5 logcat -b crash -d -t 200 2>/dev/null | tail -n 40 || true)"
+            if [ -n "$CRASH" ]; then
+                err "--- logcat -b crash (tail) ---"
+                printf '%s\n' "$CRASH" >&2
+                err "--- end logcat ---"
+            fi
+        fi
         err "Open an issue and include the lines above:"
         err "  https://github.com/$REPO/issues"
         exit 1
