@@ -38,13 +38,19 @@ if readelf -lW "$BIN" | grep 'INTERP' >/dev/null; then
   exit 1
 fi
 
-# PT_TLS alignment: informational. Static musl initializes TLS from its own
-# program headers (no Android loader involvement once PT_INTERP is absent), so
-# a small p_align is not a known failure mode for this toolchain's artifact;
-# the sibling Zig miner hard-fails < 0x40 against a different toolchain. Flip
-# this to a hard fail only if an on-device crash is ever traced to TLS align.
+# PT_TLS alignment: hard gate. "No Android loader involvement once PT_INTERP
+# is absent" turned out to be false: modern Termux cannot exec() from app data
+# (Android 10+ W^X) and routes every binary through bionic's linker64, which
+# aborts any executable whose PT_TLS p_align is < 64 ("executable's TLS
+# segment is underaligned: ... needs to be at least 64 for ARM64 Bionic",
+# StaticTlsLayout::reserve_exe_segment_and_tcb). Traced on-device: v0.2.5
+# shipped p_align 0x8 and SIGABRTed on SM-S938B / Android 16 — the same
+# threshold the sibling Zig miner gates on. src/main.rs (bionic_tls_align)
+# is what makes the linker emit 0x40; a missing PT_TLS would mean that pad
+# was dropped from the build, so it fails too.
 tls_align="$(readelf -lW "$BIN" | awk '$1 == "TLS" {print $NF}')"
 echo "PT_TLS p_align = ${tls_align:-<no PT_TLS>}"
-if [ -n "$tls_align" ] && [ "$((tls_align))" -lt 64 ]; then
-  echo "WARN: PT_TLS p_align $tls_align < 0x40 (Zig-miner guard threshold)" >&2
+if [ -z "$tls_align" ] || [ "$((tls_align))" -lt 64 ]; then
+  echo "FAIL: PT_TLS p_align ${tls_align:-<missing>} < 0x40 -- bionic's linker64 aborts this on Android" >&2
+  exit 1
 fi

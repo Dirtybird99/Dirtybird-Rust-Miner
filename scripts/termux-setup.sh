@@ -30,10 +30,13 @@ INSTALL_DIR="$HOME/dirtybird-rust-miner"
 BINARY_NAME="dero-miner"
 VERSION_FILE=".installed_version"
 SETTINGS_FILE="settings.env"
-# First release whose arm64 binary is a static-PIE. Older releases ship ET_EXEC
-# binaries that Android 10+ refuses to exec ("has unexpected e_type: 2"), so
-# they are refused up front rather than failing cryptically after download.
-MIN_TAG="v0.2.5"
+# First release that actually runs on modern Termux. Older releases are
+# refused up front rather than failing cryptically after download:
+#   < v0.2.5  ET_EXEC, Android 10+ refuses to exec ("has unexpected e_type: 2")
+#   = v0.2.5  static-PIE but PT_TLS p_align = 8; bionic's linker64 (which
+#             Termux routes all exec() through) aborts with "TLS segment is
+#             underaligned: ... needs to be at least 64 for ARM64 Bionic"
+MIN_TAG="v0.2.6"
 
 # ── daemon / pool menu ────────────────────────────────────────────────────────
 # The two pools hand out low-difficulty shares, so a phone sees progress every
@@ -298,10 +301,16 @@ else
     fi
 
     # Exec probe: catches a corrupt or incompatible download before mining.
-    if ! "./$BINARY_NAME" --version >/dev/null 2>&1; then
+    # Keep the probe's stderr — bionic's linker64 states the exact reason
+    # (v0.2.5's "TLS segment is underaligned" was eaten by a 2>/dev/null
+    # here and cost a full debugging round trip).
+    if ! PROBE_ERR="$("./$BINARY_NAME" --version 2>&1 >/dev/null)"; then
         err "$BINARY_NAME failed to execute on this device."
-        err "Re-run with --update; if it persists, open an issue with your"
-        err "Android version and device model."
+        [ -n "$PROBE_ERR" ] && printf '%s\n' "$PROBE_ERR" >&2
+        err "Device: $(uname -rm) / pagesize $(getconf PAGESIZE 2>/dev/null || echo '?')"
+        err "Model: $(getprop ro.product.model 2>/dev/null || echo '?') / Android $(getprop ro.build.version.release 2>/dev/null || echo '?')"
+        err "Open an issue and include the lines above:"
+        err "  https://github.com/$REPO/issues"
         exit 1
     fi
     info "Installed $LATEST_TAG ($("./$BINARY_NAME" --version))."

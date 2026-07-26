@@ -77,6 +77,10 @@ jobs:
           # target default, pinned because PIE links require PIC objects. Note:
           # a target-scoped RUSTFLAGS var REPLACES any global RUSTFLAGS for this
           # target; none is set today, but duplicate it here if one is added.
+          # Static-PIE alone is NOT sufficient for Termux: it execs through
+          # bionic's linker64, which also demands PT_TLS p_align >= 64 — that
+          # comes from src/main.rs (bionic_tls_align) and is hard-gated by
+          # scripts/verify-arm64-elf.sh below; qemu cannot catch it.
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: >-
             -C relocation-model=pic -C link-arg=-pie
         run: |
