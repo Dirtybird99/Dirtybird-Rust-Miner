@@ -46,6 +46,27 @@ use worker::Shared;
 const MAJOR_HF2_HEIGHT_MAINNET: u64 = 481_600;
 const MAJOR_HF2_HEIGHT_TESTNET: u64 = 4;
 
+// Modern Termux cannot exec() binaries from app data directly (Android 10+
+// W^X), so it routes them through bionic's linker64 — even a static-PIE musl
+// binary with no PT_INTERP. Bionic aborts any executable whose PT_TLS p_align
+// is < 64 ("executable's TLS segment is underaligned: … needs to be at least
+// 64 for ARM64 Bionic", StaticTlsLayout::reserve_exe_segment_and_tcb), and
+// the TLS this target otherwise emits (musl libc's own __thread) only reaches
+// p_align = 8 — v0.2.5 died exactly this way on-device. `thread_local!`
+// cannot fix it: aarch64-unknown-linux-musl has no native-TLS lowering (no
+// `target_thread_local` cfg), so the macro lands in pthread keys, never in
+// PT_TLS. Emit the 64-aligned TLS anchor directly; SHF_GNU_RETAIN ("R")
+// keeps --gc-sections from dropping it without any runtime reference.
+// scripts/verify-arm64-elf.sh hard-gates the resulting p_align.
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+core::arch::global_asm!(
+    ".pushsection .tbss.bionic_tls_align_anchor,\"awTR\",@nobits",
+    ".balign 64",
+    "bionic_tls_align_anchor:",
+    ".zero 64",
+    ".popsection",
+);
+
 #[derive(Parser, Debug)]
 #[command(
     name = "dero-miner",
