@@ -2,8 +2,8 @@
 #
 # DIRTYBIRD Rust Miner -- Termux (Android) setup & launcher.
 #
-# Download-only installer: fetches the pre-built aarch64 static-PIE release
-# from GitHub, verifies it against the published SHA256SUMS.txt, prompts for
+# Download-only installer: fetches the pre-built Android-native (bionic)
+# aarch64 release from GitHub, verifies it against SHA256SUMS.txt, prompts for
 # daemon/wallet/threads, acquires a wake-lock so Android Doze doesn't kill the
 # miner, and runs it with auto-restart.
 #
@@ -30,13 +30,17 @@ INSTALL_DIR="$HOME/dirtybird-rust-miner"
 BINARY_NAME="dero-miner"
 VERSION_FILE=".installed_version"
 SETTINGS_FILE="settings.env"
-# First release that actually runs on modern Termux. Older releases are
-# refused up front rather than failing cryptically after download:
+# First release with an Android-native (bionic) arm64 artifact. Older
+# releases are refused up front rather than failing cryptically:
 #   < v0.2.5  ET_EXEC, Android 10+ refuses to exec ("has unexpected e_type: 2")
-#   = v0.2.5  static-PIE but PT_TLS p_align = 8; bionic's linker64 (which
+#   = v0.2.5  musl static-PIE, PT_TLS p_align = 8; bionic's linker64 (which
 #             Termux routes all exec() through) aborts with "TLS segment is
 #             underaligned: ... needs to be at least 64 for ARM64 Bionic"
-MIN_TAG="v0.2.6"
+#   = v0.2.6  PT_TLS fixed, but the musl static-PIE still dies under
+#             linker64's exec path (silent SIGSEGV, no loader message) — and
+#             musl DNS (/etc/resolv.conf) can never resolve on Android anyway.
+#             v0.2.7+ ships a separate bionic-native android-arm64 artifact.
+MIN_TAG="v0.2.7"
 
 # ── daemon / pool menu ────────────────────────────────────────────────────────
 # The two pools hand out low-difficulty shares, so a phone sees progress every
@@ -102,9 +106,9 @@ usage() {
     cat <<'USAGE'
 DIRTYBIRD Rust Miner -- Termux (Android) setup & launcher.
 
-Downloads the pre-built aarch64 static-PIE release, verifies its checksum,
-prompts for daemon/wallet/threads (persisted in settings.env), acquires a
-wake-lock so Android Doze doesn't pause mining, and runs with auto-restart.
+Downloads the pre-built Android-native (bionic) aarch64 release, verifies its
+checksum, prompts for daemon/wallet/threads (persisted in settings.env),
+acquires a wake-lock so Android Doze doesn't pause mining, and auto-restarts.
 
 Usage:
   bash scripts/termux-setup.sh                # install (if needed) + run
@@ -113,7 +117,7 @@ Usage:
   bash scripts/termux-setup.sh --uninstall    # remove installed files
   bash scripts/termux-setup.sh --help         # this message
 
-Requires aarch64 (64-bit ARM) Android and release v0.2.5 or newer. Install
+Requires aarch64 (64-bit ARM) Android and release v0.2.7 or newer. Install
 termux-api ("pkg install termux-api" plus the Termux:API app) for wake-lock
 and battery-status support.
 USAGE
@@ -145,7 +149,7 @@ ARCH="$(uname -m)"
 if [ "$(uname -o 2>/dev/null)" != "Android" ]; then
     err "This script is for Android/Termux only."
     err "On other platforms, download the matching release manually:"
-    err "  https://github.com/$REPO/releases  (${NAME}-{amd64,arm64,win64}-v*)"
+    err "  https://github.com/$REPO/releases  (${NAME}-{amd64,arm64,android-arm64,win64}-v*)"
     exit 1
 fi
 if [ "$ARCH" != "aarch64" ]; then
@@ -225,16 +229,16 @@ else
     info "Latest release: $LATEST_TAG"
 
     # Releases are immutable, so the tag alone is trustworthy evidence of
-    # whether the arm64 binary is Android-runnable (static-PIE since MIN_TAG).
+    # whether an Android-native artifact exists (android-arm64 since MIN_TAG).
     if [ "$LATEST_TAG" != "$MIN_TAG" ] &&
        [ "$(printf '%s\n' "$MIN_TAG" "$LATEST_TAG" | sort -V | head -n1)" != "$MIN_TAG" ]; then
         err "Release $LATEST_TAG predates Android support."
-        err "Releases before $MIN_TAG ship a non-PIE arm64 binary that Android refuses to run."
+        err "Releases before $MIN_TAG have no Android-native (bionic) arm64 binary."
         err "Wait for $MIN_TAG or newer: https://github.com/$REPO/releases"
         exit 1
     fi
 
-    ARCHIVE="${NAME}-arm64-${LATEST_TAG}.tar.gz"
+    ARCHIVE="${NAME}-android-arm64-${LATEST_TAG}.tar.gz"
     BASE_URL="https://github.com/$REPO/releases/download/${LATEST_TAG}"
 
     info "Downloading $ARCHIVE ..."
@@ -267,8 +271,8 @@ else
     tar xzf "$ARCHIVE"
     rm -f "$ARCHIVE"
 
-    # The tarball nests everything under ${NAME}-arm64-vX.Y.Z/; lift the
-    # binary out to $INSTALL_DIR.
+    # The tarball nests everything under ${NAME}-android-arm64-vX.Y.Z/; lift
+    # the binary out to $INSTALL_DIR.
     NESTED="$(find . -maxdepth 2 -name "$BINARY_NAME" -type f | head -1)"
     if [ -z "$NESTED" ]; then
         err "Extraction succeeded but $BINARY_NAME binary not found."
@@ -281,9 +285,9 @@ else
     chmod +x "./$BINARY_NAME"
 
     # Backstop behind the version floor: byte-check that the binary really is
-    # an aarch64 static-PIE before first exec, so a hypothetical regressed
-    # release fails with an actionable message instead of a cryptic exec
-    # error. Same probes the release CI asserts (scripts/verify-arm64-elf.sh).
+    # an Android-native aarch64 PIE before first exec, so a hypothetical
+    # regressed release fails with an actionable message instead of a cryptic
+    # exec error. Same probes the release CI asserts (verify-arm64-elf.sh).
     if [ "$(od -An -tx1 -N4 "./$BINARY_NAME" | tr -d ' \n')" != "7f454c46" ]; then
         err "$BINARY_NAME is not an ELF binary (corrupt download?)."
         exit 1
@@ -296,6 +300,17 @@ else
     if [ "$ETYPE" != "0300" ]; then
         err "This $BINARY_NAME build is not position-independent (e_type=$ETYPE);"
         err "Android cannot run it. Use release $MIN_TAG or newer:"
+        err "  https://github.com/$REPO/releases"
+        exit 1
+    fi
+    # Positive ID for the Android-native build. e_type is ET_DYN for BOTH the
+    # bionic dynamic PIE and the generic-Linux musl static-PIE, so the probe
+    # above cannot tell them apart; only the android artifact carries a
+    # PT_INTERP requesting /system/bin/linker64. Turns "silently exec-fails"
+    # into an actionable message if the wrong tarball is ever packaged.
+    if ! LC_ALL=C grep -qa '/system/bin/linker64' "./$BINARY_NAME"; then
+        err "$BINARY_NAME is not the Android-native (bionic) build."
+        err "Expected asset: $ARCHIVE"
         err "  https://github.com/$REPO/releases"
         exit 1
     fi
