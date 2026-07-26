@@ -126,15 +126,44 @@ jobs:
           LIB="$(pick '.target.kind[0] == "lib"')"
           test -x "$HW" && test -x "$KAT" && test -x "$LIB"
 
+          # libtest EXITS 0 WHEN A FILTER MATCHES NOTHING, so the exit status of
+          # a filtered run proves nothing: assert that a nonzero number of tests
+          # actually passed. A stale filter turned this very gate into a silent
+          # no-op once ("0 passed; 13 filtered out", job green) -- renaming a
+          # test must break the build rather than quietly delete the coverage.
+          run_tests() { # $1 = label, rest = command to run
+            local label="$1"; shift
+            local out re='test result: ok\. [1-9][0-9]* passed'
+            if ! out="$("$@" --nocapture 2>&1)"; then
+              printf '%s\n' "$out"
+              echo "::error::$label failed"
+              return 1
+            fi
+            printf '%s\n' "$out"
+            if [[ ! "$out" =~ $re ]]; then
+              echo "::error::$label selected no tests -- this gate is running nothing"
+              return 1
+            fi
+          }
+
           # 1. The hardware path is actually reachable here (see DERO_REQUIRE_*).
-          qemu-aarch64-static "$HW" --nocapture
+          run_tests "hwcap assertion" qemu-aarch64-static "$HW"
+
           # 2. Byte-exactness across the whole 7-stage pipeline against the
           #    Dirtybird C miner's published KAT for pow("a") -- an independent
           #    implementation's answer, so it cannot drift with our own fixtures.
-          qemu-aarch64-static "$KAT"
+          #    Assert the verdict string, not just the exit status.
+          kat_out="$(qemu-aarch64-static "$KAT")"
+          printf '%s\n' "$kat_out"
+          [[ "$kat_out" == *"ALL CORRECTNESS CHECKS PASS"* ]]
+
           # 3. The v114 backend still reproduces the frozen corpus (hashes AND
-          #    refusal parity) with hardware SHA in the fused SA->SHA sink.
-          qemu-aarch64-static "$LIB" v114_matches_golden_fixture --exact --nocapture
+          #    refusal parity) with hardware SHA in the fused SA->SHA sink. The
+          #    filter is module-qualified because --exact matches the full test
+          #    path; the 20k-case fuzz test is deliberately left to x86 CI, being
+          #    far too slow under emulation.
+          run_tests "v114 golden fixture" qemu-aarch64-static "$LIB" \
+            v114_golden_tests::v114_matches_golden_fixture --exact
 
   # Dry-run of the release workflow's android-arm64 build: same toolchain pin,
   # same NDK resolution, same ELF asserts. There is deliberately NO execution
