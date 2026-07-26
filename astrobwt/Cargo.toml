@@ -13,8 +13,11 @@ default = []
 # path no longer uses it (its refusal fallback is the pure-Rust sais32).
 libsais = ["dep:libsais-sys"]
 # Production mining backend: the Dirtybird v1.14 descriptor suffix array, in pure
-# Rust (src/v114.rs). Refused inputs fall back to the pure-Rust sais32. Needs NO
-# C toolchain at all (no clang-cl, no cc/libsais).
+# Rust (src/v114.rs). Refused inputs fall back to the pure-Rust sais32. Needs no
+# C toolchain for the SA itself (no clang-cl, no cc/libsais) on any target. One
+# unrelated exception applies to aarch64 ONLY: the sha2 `asm` dependency below
+# builds a (never-called) .S through cc, so arm64 builds do need a C compiler
+# for the target -- x86/Windows builds remain C-free end to end.
 v114 = []
 # Dev/verification only: ALSO compile the vendored C++ descriptor SA
 # (vendor/v114) AND libsais, so the Rust SA can be differentially fuzzed against
@@ -43,6 +46,18 @@ num-traits = { workspace = true }
 # default-features = false drops the crate's default `openmp` feature (and the
 # openmp-sys system dependency): the miner already parallelizes across nonces.
 libsais-sys = { version = "0.2", default-features = false, optional = true }
+
+# aarch64 only: sha2's ARMv8 crypto-extension backend (SHA256H/SHA256SU with
+# runtime hwcap detect and soft fallback) sits behind the crate's `asm`
+# feature, which pulls sha2-asm's cc-assembled .S — the ONE exception to the
+# no-C-toolchain rule above, and only on aarch64. Without it every AstroBWTv3
+# hash pays ~4,200 SOFTWARE sha256 compressions (the ~263–284 KB final digest
+# of the SA output): measured 2.41 KH/s on a Snapdragon 8 Elite where hw SHA
+# projects ~7–8 KH/s. x86 needs nothing — sha2 compiles its SHA-NI backend
+# unconditionally there — and resolver-2 feature unification keeps x86/Windows
+# builds byte-identical to before this section existed.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { version = "0.10", features = ["asm"] }
 
 [build-dependencies]
 cc = "1"

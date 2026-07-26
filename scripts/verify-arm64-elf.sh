@@ -9,6 +9,10 @@
 #     ET_DYN, PT_INTERP = /system/bin/linker64, DT_NEEDED in an allowlist,
 #     every PT_LOAD >= 16 KB-aligned, PT_TLS (if present) p_align >= 0x40.
 #
+# Both additionally must contain ARMv8 SHA-256 instructions (v0.2.8+), which
+# needs a disassembler that can decode aarch64 -- llvm-objdump by default,
+# override with OBJDUMP=. Ubuntu's stock objdump is x86-only and CANNOT.
+#
 # Android's loader rejects ET_EXEC ("has unexpected e_type: 2"), and a QEMU
 # smoke test cannot catch loader-policy regressions (qemu-user has no bionic),
 # so release and CI dry-run both gate on these byte/ELF-level checks. The
@@ -40,6 +44,48 @@ fi
 etype="$(od -An -tx1 -j16 -N2 "$BIN" | tr -d ' \n')"
 if [ "$etype" != "0300" ]; then
   echo "FAIL: e_type bytes are $etype, want 0300 (ET_DYN/PIE)" >&2
+  exit 1
+fi
+
+# ---- ARMv8 SHA-256 instructions (BOTH flavors, since v0.2.8) ----
+# Every AstroBWTv3 hash ends by SHA-256-ing the suffix-array output (~263-284
+# KB, ~4,200 compression calls), so whether sha2 got its ARMv8 crypto backend
+# or its software rounds is most of the arm64 hashrate -- a Snapdragon 8 Elite
+# measured 2.41 KH/s on the software path. That backend is only compiled in
+# because astrobwt/Cargo.toml turns on sha2's `asm` feature for aarch64, and a
+# feature can stop applying silently: a resolver change, a dependency bump, an
+# edit to default-features. The build stays green and the artifact loses ~3x.
+# So assert the instructions in the shipped binary rather than trusting the
+# manifest.
+#
+# The disassembler needs a POSITIVE CONTROL. Grepping for `sha256h` yields zero
+# both when the instruction is absent AND when the tool cannot decode aarch64 --
+# Ubuntu's stock x86-only binutils objdump prints the file header, disassembles
+# nothing, and exits 0. That false negative briefly "confirmed" this very
+# feature as broken during development, so a zero is only trusted after the
+# disassembly is shown to contain a plausible number of instructions.
+# Override with OBJDUMP= to use a specific multi-arch disassembler.
+OBJDUMP="${OBJDUMP:-llvm-objdump}"
+if ! command -v "$OBJDUMP" >/dev/null 2>&1; then
+  echo "FAIL: disassembler '$OBJDUMP' not found -- cannot verify the SHA-256 backend" >&2
+  echo "      (rustup component add llvm-tools, or set OBJDUMP=<multi-arch objdump>)" >&2
+  exit 1
+fi
+disasm="$("$OBJDUMP" -d --no-show-raw-insn "$BIN" 2>/dev/null || true)"
+insn_lines="$(printf '%s\n' "$disasm" | grep -cE '^[[:space:]]+[0-9a-f]+:' || true)"
+if [ "$insn_lines" -lt 5000 ]; then
+  echo "FAIL: '$OBJDUMP' decoded only $insn_lines instructions from an arm64 miner" >&2
+  echo "      binary -- it cannot disassemble aarch64, so no SHA verdict is possible" >&2
+  echo "      (a zero-match result here would be a false negative, not a regression)" >&2
+  exit 1
+fi
+sha_insns="$(printf '%s\n' "$disasm" | grep -cE '\bsha256(h|h2|su0|su1)\b' || true)"
+echo "ARMv8 SHA-256 instructions = $sha_insns (in $insn_lines decoded, via $OBJDUMP)"
+if [ "$sha_insns" -eq 0 ]; then
+  echo "FAIL: no ARMv8 SHA-256 instructions -- sha2 fell back to software rounds," >&2
+  echo "      which costs roughly 3x hashrate on ARM. Did sha2's aarch64 'asm'" >&2
+  echo "      feature stop applying? Check:" >&2
+  echo "        cargo tree --target aarch64-linux-android -i sha2 -f '{p} features=[{f}]'" >&2
   exit 1
 fi
 

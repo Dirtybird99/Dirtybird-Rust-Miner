@@ -43,6 +43,11 @@ jobs:
   # job is where the static-PIE contract is proven BEFORE any tag exists; the
   # tag run then repeats known-good steps. Keep the env var and the verify
   # steps byte-identical to release.yml.
+  #
+  # This job additionally owns the aarch64 CORRECTNESS proof for the hardware
+  # SHA-256 backend (last step). That one is deliberately CI-only: it is the
+  # kind of check whose whole value is running before a tag exists, and the
+  # release run stays a repeat of known-good build+package steps.
   linux-arm64-static-pie:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -57,6 +62,23 @@ jobs:
       - uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094 # v2
         with:
           tool: cargo-zigbuild@0.23.0
+
+      - name: Resolve aarch64 disassembler
+        run: |
+          set -euo pipefail
+          # verify-arm64-elf.sh asserts ARMv8 SHA-256 instructions in the
+          # artifact, which requires a disassembler that can decode aarch64.
+          # ubuntu-latest's objdump is x86-only: handed an arm64 binary it
+          # prints the file header, disassembles NOTHING, and exits 0 -- a
+          # silent false negative that once "confirmed" this very feature as
+          # broken. The toolchain's own llvm-objdump is multi-arch and pinned
+          # with the compiler, so it cannot drift with the runner image.
+          rustup component add llvm-tools
+          HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          OBJDUMP="$(rustc --print sysroot)/lib/rustlib/$HOST/bin/llvm-objdump"
+          test -x "$OBJDUMP"
+          "$OBJDUMP" --version | head -n2
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
 
       - name: Build arm64 static-PIE
         env:
@@ -78,12 +100,82 @@ jobs:
             jq -r '.packages[] | select(.name == "dero-miner") | .version')"
           test "$(qemu-aarch64-static "$BIN" --version)" = "dero-miner $PKGVER"
 
+      - name: Prove the hardware SHA-256 path under QEMU
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: >-
+            -C relocation-model=pic -C link-arg=-pie
+          # Makes "this emulator advertises no crypto extensions" a FAILURE
+          # instead of a green run that only ever exercised software rounds and
+          # therefore proved nothing about the backend that changed.
+          DERO_REQUIRE_AARCH64_SHA2: "1"
+        run: |
+          set -euo pipefail
+          # aarch64 is the only place the SHA-256 backend changed (sha2's `asm`
+          # feature, astrobwt/Cargo.toml) and x86 CI cannot execute it. qemu-user
+          # can: TCG implements the ARMv8 crypto extensions and advertises them
+          # in AT_HWCAP, so these runs exercise the same SHA256H/SHA256SU code a
+          # phone runs. cargo-zigbuild has no `test` subcommand, so build the
+          # test/example binaries and invoke them under qemu directly; ask cargo
+          # for their paths rather than guessing the -<metadata-hash> suffixes.
+          json="$(cargo zigbuild --locked --release -p dero-astrobwt \
+            --features v114 --target aarch64-unknown-linux-musl \
+            --tests --example kat --message-format=json)"
+          pick() { printf '%s' "$json" | jq -r "select(.executable and $1) | .executable" | tail -n1; }
+          HW="$(pick '.target.name == "aarch64_hw_sha256"')"
+          KAT="$(pick '.target.name == "kat"')"
+          LIB="$(pick '.target.kind[0] == "lib"')"
+          test -x "$HW" && test -x "$KAT" && test -x "$LIB"
+
+          # libtest EXITS 0 WHEN A FILTER MATCHES NOTHING, so the exit status of
+          # a filtered run proves nothing: assert that a nonzero number of tests
+          # actually passed. A stale filter turned this very gate into a silent
+          # no-op once ("0 passed; 13 filtered out", job green) -- renaming a
+          # test must break the build rather than quietly delete the coverage.
+          run_tests() { # $1 = label, rest = command to run
+            local label="$1"; shift
+            local out re='test result: ok\. [1-9][0-9]* passed'
+            if ! out="$("$@" --nocapture 2>&1)"; then
+              printf '%s\n' "$out"
+              echo "::error::$label failed"
+              return 1
+            fi
+            printf '%s\n' "$out"
+            if [[ ! "$out" =~ $re ]]; then
+              echo "::error::$label selected no tests -- this gate is running nothing"
+              return 1
+            fi
+          }
+
+          # 1. The hardware path is actually reachable here (see DERO_REQUIRE_*).
+          run_tests "hwcap assertion" qemu-aarch64-static "$HW"
+
+          # 2. Byte-exactness across the whole 7-stage pipeline against the
+          #    Dirtybird C miner's published KAT for pow("a") -- an independent
+          #    implementation's answer, so it cannot drift with our own fixtures.
+          #    Assert the verdict string, not just the exit status.
+          kat_out="$(qemu-aarch64-static "$KAT")"
+          printf '%s\n' "$kat_out"
+          [[ "$kat_out" == *"ALL CORRECTNESS CHECKS PASS"* ]]
+
+          # 3. The v114 backend still reproduces the frozen corpus (hashes AND
+          #    refusal parity) with hardware SHA in the fused SA->SHA sink. The
+          #    filter is module-qualified because --exact matches the full test
+          #    path; the 20k-case fuzz test is deliberately left to x86 CI, being
+          #    far too slow under emulation.
+          run_tests "v114 golden fixture" qemu-aarch64-static "$LIB" \
+            v114_golden_tests::v114_matches_golden_fixture --exact
+
   # Dry-run of the release workflow's android-arm64 build: same toolchain pin,
   # same NDK resolution, same ELF asserts. There is deliberately NO execution
   # smoke test: qemu-user cannot run a bionic binary (it would need
   # /system/bin/linker64 + /system/lib64), so this job plus the installer's
   # on-device exec probe are the artifact's entire safety net. Keep the NDK
   # resolve step and the verify invocation byte-identical to release.yml.
+  #
+  # What DOES get executed for this target's code is in the arm64 static-PIE
+  # job: same aarch64 codegen and the same sha2 hardware backend, differing
+  # only in libc, run under qemu. So "the android binary is never executed in
+  # CI" is a statement about the bionic ABI, not about the hash pipeline.
   android-arm64-bionic:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -104,11 +196,33 @@ jobs:
           # floor is 21).
           NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}}"
           test -n "$NDK" && test -d "$NDK"
-          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
-          test -x "$CLANG"
+          BINDIR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CLANG="$BINDIR/aarch64-linux-android24-clang"
+          test -x "$CLANG" && test -x "$BINDIR/llvm-ar"
           echo "NDK: $NDK"; cat "$NDK/source.properties"
           "$CLANG" --version | head -n1
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CLANG" >> "$GITHUB_ENV"
+          # A C compiler for the TARGET became necessary in v0.2.8: sha2's `asm`
+          # feature (the aarch64 hardware SHA-256 backend) pulls in sha2-asm,
+          # whose build.rs cc-compiles sha256_aarch64.S. That object is dead
+          # code here -- sha2's aarch64 backend is Rust `asm!`, and only x86
+          # calls into sha2-asm -- but it must still COMPILE or the build fails,
+          # and without these the cc crate reaches for the host gcc and emits
+          # x86 objects for an aarch64 link.
+          echo "CC_aarch64_linux_android=$CLANG" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$BINDIR/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Resolve aarch64 disassembler
+        run: |
+          set -euo pipefail
+          # Same rationale as the arm64 static-PIE job: ubuntu's objdump cannot
+          # decode aarch64 and would silently return "no SHA instructions".
+          rustup component add llvm-tools
+          HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          OBJDUMP="$(rustc --print sysroot)/lib/rustlib/$HOST/bin/llvm-objdump"
+          test -x "$OBJDUMP"
+          "$OBJDUMP" --version | head -n2
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
 
       - name: Build android-arm64
         env:

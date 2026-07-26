@@ -5,8 +5,10 @@ A Rust CPU miner for **DERO**'s AstroBWTv3 proof-of-work — a port of the Go re
 **pure Rust** (`astrobwt/src/v114.rs`, `#![forbid(unsafe_code)]`), ported from the C++ that
 used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
 
-> **The pure-Rust line.** The whole AstroBWTv3 hash path *and* the pool TLS are Rust — the
-> shipped binary needs no C toolchain to build and links no C/assembly dependency. It defaults
+> **The pure-Rust line.** The whole AstroBWTv3 hash path *and* the pool TLS are Rust — on
+> x86/Windows the shipped binary needs no C toolchain to build and links no C/assembly
+> dependency. (arm64 gained one build-time exception in v0.2.8, the price of ARM's hardware
+> SHA-256 — see [Build](#build).) It defaults
 > to a materialized suffix-array path with P-core pinning + HIGH priority and, on CPUs with
 > SHA-NI, a 2-way multibuffer SHA that hashes two nonces at once. Benchmark methodology and the
 > (honestly caveated) cross-miner numbers are in [BENCHMARKS.md](BENCHMARKS.md); each miner is
@@ -24,24 +26,37 @@ used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
   **verify-on-submit**: any target-clearing share is re-checked with the canonical
   (SA-IS/libsais) PoW before it is sent, so a bug or hardware glitch costs a share rather
   than submitting garbage.
-- **100% Rust hash, no C toolchain.** The whole AstroBWTv3 hash path is pure Rust:
+- **100% Rust hash, no C toolchain (x86).** The whole AstroBWTv3 hash path is pure Rust:
   `astrobwt/src/v114.rs` is `#![forbid(unsafe_code)]`, its rare refusal fallback is the
   pure-Rust `sais32` (not C libsais), and `--features v114` compiles with **no C compiler at
   all** — no clang-cl, no cc/libsais. The C++ descriptor SA and the C libsais are opt-in
   differential-fuzz oracles behind the dev-only `v114-cpp` feature. The pool TLS is pure Rust too
   (`rustls` + `rustls-rustcrypto`, replacing `ring`'s C/assembly), so building needs no C
-  compiler and the shipped binary links no C dependency.
+  compiler and the shipped binary links no C dependency. **arm64 exception (v0.2.8+):** ARM's
+  hardware SHA-256 comes from `sha2`'s `asm` feature, which also drags in a C-assembled
+  `sha256_aarch64.S` that nothing on aarch64 ever calls — that backend is Rust `asm!` plus NEON
+  intrinsics — but which still has to compile, so arm64 builds need a C compiler for the target.
+  Declining it would cost roughly 3x the hashrate on ARM, so it is the right trade.
 - **Honest benchmarking built in.** `--sustained` is a counter-summed, fixed-window scoreboard
   (the per-thread `--bench` table understates hybrid-CPU throughput); see
   [BENCHMARKS.md](BENCHMARKS.md) for the head-to-head methodology.
 
 ## Build
 
-**No C toolchain required — at all.** The descriptor suffix array AND its refusal fallback
+**No C toolchain required on x86 — at all.** The descriptor suffix array AND its refusal fallback
 are pure Rust (`sais32`), so a plain stable `cargo build --release -p dero-miner --features
 v114` is the whole story — no `clang-cl`, no `cc`/C compiler, no libsais, no matched-LLVM
 nightly, no `.cargo/config.toml`. Use the plain `release` profile: fat LTO (`--profile
 release-lto`) is a ~6% *pessimization* for the Rust backend, see [BENCHMARKS.md](BENCHMARKS.md).
+
+**arm64 needs a C compiler for the target (v0.2.8+).** Not for the hash code — that stays
+Rust — but because enabling `sha2`'s ARMv8 SHA-256 backend also pulls in `sha2-asm`, whose
+build script assembles a `sha256_aarch64.S` that only x86 ever calls. Cross-compiling from
+this repo's CI supplies one automatically: `cargo zigbuild` for the musl arm64 tarball, the
+NDK's `aarch64-linux-android24-clang` for the Android artifact (`.github/workflows/release.yml`).
+Building on an arm64 host, any working `cc` will do. Without the hardware backend, `sha2`
+falls back to software rounds and an ARM device gives up the bulk of its hashrate —
+`scripts/verify-arm64-elf.sh` fails the build rather than shipping that silently.
 
 The vendored C++ descriptor SA and the C `libsais` are retained only as differential-fuzz
 oracles behind the dev-only `v114-cpp` feature, which *does* need `clang-cl` on `PATH`.
@@ -105,6 +120,14 @@ a wake-lock so Android Doze doesn't pause mining, and auto-restarts the miner if
 Note the arm64 artifact split: `arm64` = static-musl for generic arm64 Linux (SBCs, arm64
 VMs) and **will not run on Android**; `android-arm64` = bionic-native, the only one Termux
 can exec and the only one that can resolve DNS on Android.
+
+Use v0.2.8 or newer for phone hashrate. v0.2.7 hashed with `sha2`'s software rounds, and
+since every AstroBWTv3 hash SHA-256s ~270 KB of suffix-array output (~4,200 compressions),
+that stage dominated everything else on ARM. v0.2.8 enables the ARMv8 crypto extensions
+(SHA256H/SHA256SU) — the same hashes, byte for byte, with that stage no longer the
+bottleneck. Expect a large multiple of v0.2.7's rate on any device whose `AT_HWCAP`
+advertises `sha2`, which every modern phone does. Devices without the extensions
+still work; `sha2` detects that at runtime and uses the software path.
 
 Take the pool (option 1, the default) on a phone. The solo nodes pay out at network
 difficulty, which at phone hashrates means hours between rewards — the counters sit at

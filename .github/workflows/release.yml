@@ -6,6 +6,11 @@ name: Release
 # compile via cargo-zigbuild; the android target links with the runner's NDK
 # (zig has no bionic libc). Plain `--release` (no PGO): the SHA-NI 2-way path
 # is selected at runtime, so the binaries stay portable.
+#
+# Both arm64 targets also need a C compiler for the TARGET (not just a linker):
+# sha2's aarch64 hardware-SHA-256 backend is enabled via its `asm` feature,
+# which drags in a cc-compiled .S that nothing on aarch64 calls but that must
+# still build. zig cc covers musl; the NDK clang covers android.
 
 on:
   push:
@@ -52,11 +57,35 @@ jobs:
           # floor is 21).
           NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}}"
           test -n "$NDK" && test -d "$NDK"
-          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
-          test -x "$CLANG"
+          BINDIR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CLANG="$BINDIR/aarch64-linux-android24-clang"
+          test -x "$CLANG" && test -x "$BINDIR/llvm-ar"
           echo "NDK: $NDK"; cat "$NDK/source.properties"
           "$CLANG" --version | head -n1
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CLANG" >> "$GITHUB_ENV"
+          # A C compiler for the TARGET became necessary in v0.2.8: sha2's `asm`
+          # feature (the aarch64 hardware SHA-256 backend) pulls in sha2-asm,
+          # whose build.rs cc-compiles sha256_aarch64.S. That object is dead
+          # code here -- sha2's aarch64 backend is Rust `asm!`, and only x86
+          # calls into sha2-asm -- but it must still COMPILE or the build fails,
+          # and without these the cc crate reaches for the host gcc and emits
+          # x86 objects for an aarch64 link.
+          echo "CC_aarch64_linux_android=$CLANG" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$BINDIR/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Resolve aarch64 disassembler
+        run: |
+          set -euo pipefail
+          # verify-arm64-elf.sh asserts ARMv8 SHA-256 instructions in BOTH arm64
+          # artifacts. ubuntu's objdump is x86-only and would silently report
+          # zero matches for an arm64 binary, so use the toolchain's multi-arch
+          # llvm-objdump. Keep byte-identical to ci.yml.
+          rustup component add llvm-tools
+          HOST="$(rustc -vV | sed -n 's/^host: //p')"
+          OBJDUMP="$(rustc --print sysroot)/lib/rustlib/$HOST/bin/llvm-objdump"
+          test -x "$OBJDUMP"
+          "$OBJDUMP" --version | head -n2
+          echo "OBJDUMP=$OBJDUMP" >> "$GITHUB_ENV"
 
       - name: Verify signed tag and package version
         env:
@@ -179,8 +208,9 @@ jobs:
           test "$("$BIN" --version)" = "dero-miner ${VER#v}"
 
           # ---- arm64 (musl, generic Linux): static-PIE policy + execution ----
-          # The readelf asserts pin the static-PIE contract; the qemu run
-          # proves the packaged binary actually starts (musl init, TLS setup).
+          # The readelf asserts pin the static-PIE contract, the SHA-256
+          # instruction assert pins the hardware hash backend (v0.2.8+), and the
+          # qemu run proves the packaged binary actually starts (musl init, TLS).
           tar -xzf "Dirtybird-Rust-Miner-arm64-$VER.tar.gz" \
             -C "$RUNNER_TEMP/rust-miner-smoke"
           ARM="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-arm64-$VER/dero-miner"
