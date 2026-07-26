@@ -77,3 +77,61 @@ jobs:
           PKGVER="$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.name == "dero-miner") | .version')"
           test "$(qemu-aarch64-static "$BIN" --version)" = "dero-miner $PKGVER"
+
+  # Dry-run of the release workflow's android-arm64 build: same toolchain pin,
+  # same NDK resolution, same ELF asserts. There is deliberately NO execution
+  # smoke test: qemu-user cannot run a bionic binary (it would need
+  # /system/bin/linker64 + /system/lib64), so this job plus the installer's
+  # on-device exec probe are the artifact's entire safety net. Keep the NDK
+  # resolve step and the verify invocation byte-identical to release.yml.
+  android-arm64-bionic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.0
+
+      - name: Resolve Android NDK toolchain
+        run: |
+          set -euo pipefail
+          # ubuntu-latest sets ANDROID_NDK{,_HOME,_ROOT,_LATEST_HOME}; which
+          # one is newest has moved between image generations, so prefer
+          # _LATEST_HOME and fail loudly rather than silently building against
+          # a stale NDK. Workflow-level `env:` is not shell-expanded, hence
+          # GITHUB_ENV. API 24 = Android 7.0, Termux's own minimum (Rust std's
+          # floor is 21).
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}}"
+          test -n "$NDK" && test -d "$NDK"
+          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          test -x "$CLANG"
+          echo "NDK: $NDK"; cat "$NDK/source.properties"
+          "$CLANG" --version | head -n1
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CLANG" >> "$GITHUB_ENV"
+
+      - name: Build android-arm64
+        env:
+          # 16 KB pages ship on Android 15+ devices. NDK r27+ defaults
+          # max-page-size to 16384, older NDKs to 4096 -- pin it explicitly so
+          # the artifact does not depend on the runner image's NDK, and
+          # verify-arm64-elf.sh asserts the result. Target-scoped RUSTFLAGS
+          # REPLACE any global RUSTFLAGS (none today) -- duplicate here if one
+          # is ever added.
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS: >-
+            -C link-arg=-Wl,-z,max-page-size=16384
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android
+          cargo build --locked --release -p dero-miner --features v114 \
+            --target aarch64-linux-android --bin dero-miner
+
+      - name: Dump ELF facts + verify bionic policy
+        run: |
+          set -euo pipefail
+          BIN=target/aarch64-linux-android/release/dero-miner
+          # Recorded unconditionally so an image/toolchain bump shows up as a
+          # visible log diff -- including whether PT_TLS ever appears.
+          readelf -hlW "$BIN"
+          readelf -dW "$BIN"
+          scripts/verify-arm64-elf.sh "$BIN" bionic
