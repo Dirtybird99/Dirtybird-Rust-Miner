@@ -1,10 +1,11 @@
 name: Release
 
-# Builds the pure-Rust miner for Windows x64 + Linux x64/aarch64 (static musl,
-# arm64 as static-PIE so Android/Termux can exec it) and publishes a GitHub
-# Release with the archives + SHA256SUMS. Cross-compiles every target from one
-# Linux runner via cargo-zigbuild. Plain `--release` (no PGO): the SHA-NI 2-way
-# path is selected at runtime, so the binaries stay portable.
+# Builds the pure-Rust miner for Windows x64, Linux x64/aarch64 (static musl),
+# and Android aarch64 (bionic-native, the Termux artifact) and publishes a
+# GitHub Release with the archives + SHA256SUMS. musl/mingw targets cross-
+# compile via cargo-zigbuild; the android target links with the runner's NDK
+# (zig has no bionic libc). Plain `--release` (no PGO): the SHA-NI 2-way path
+# is selected at runtime, so the binaries stay portable.
 
 on:
   push:
@@ -38,7 +39,24 @@ jobs:
           tool: cargo-zigbuild@0.23.0
 
       - name: Add cross targets
-        run: rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+        run: rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-linux-android
+
+      - name: Resolve Android NDK toolchain
+        run: |
+          set -euo pipefail
+          # ubuntu-latest sets ANDROID_NDK{,_HOME,_ROOT,_LATEST_HOME}; which
+          # one is newest has moved between image generations, so prefer
+          # _LATEST_HOME and fail loudly rather than silently building against
+          # a stale NDK. Workflow-level `env:` is not shell-expanded, hence
+          # GITHUB_ENV. API 24 = Android 7.0, Termux's own minimum (Rust std's
+          # floor is 21).
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}}"
+          test -n "$NDK" && test -d "$NDK"
+          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          test -x "$CLANG"
+          echo "NDK: $NDK"; cat "$NDK/source.properties"
+          "$CLANG" --version | head -n1
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CLANG" >> "$GITHUB_ENV"
 
       - name: Verify signed tag and package version
         env:
@@ -68,21 +86,30 @@ jobs:
       - name: Build all platforms + package
         env:
           VER: ${{ github.ref_name }}
-          # Android 10+ refuses ET_EXEC ("has unexpected e_type: 2"), so the
-          # arm64 binary must be a static-PIE. zig cc silently ignores clang's
-          # -static-pie (it maps to a no-op in zig 0.14.1 -- that is exactly how
-          # rustc's own static-PIE request for musl targets gets dropped) but
-          # honors plain -pie, and links musl targets statically with rcrt1.o,
-          # so this yields ET_DYN with no PT_INTERP. relocation-model=pic is the
-          # target default, pinned because PIE links require PIC objects. Note:
-          # a target-scoped RUSTFLAGS var REPLACES any global RUSTFLAGS for this
+          # arm64 (musl): the GENERIC-LINUX artifact since v0.2.7 — Termux is
+          # served by the separate aarch64-linux-android tarball below (a musl
+          # static-PIE dies under Termux's exec-through-linker64 path and musl
+          # DNS cannot resolve on Android at all). Built as a static-PIE:
+          # zig cc silently ignores clang's -static-pie (a no-op in zig
+          # 0.14.1 -- exactly how rustc's own static-PIE request for musl
+          # targets gets dropped) but honors plain -pie, and links musl
+          # targets statically with rcrt1.o, so this yields ET_DYN with no
+          # PT_INTERP. relocation-model=pic is the target default, pinned
+          # because PIE links require PIC objects. The PT_TLS >= 0x40 gate
+          # (src/main.rs bionic_tls_align + verify-arm64-elf.sh) is retained:
+          # people do fetch this tarball onto phones by hand. Note: a
+          # target-scoped RUSTFLAGS var REPLACES any global RUSTFLAGS for its
           # target; none is set today, but duplicate it here if one is added.
-          # Static-PIE alone is NOT sufficient for Termux: it execs through
-          # bionic's linker64, which also demands PT_TLS p_align >= 64 — that
-          # comes from src/main.rs (bionic_tls_align) and is hard-gated by
-          # scripts/verify-arm64-elf.sh below; qemu cannot catch it.
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: >-
             -C relocation-model=pic -C link-arg=-pie
+          # android-arm64: bionic DYNAMIC PIE (PT_INTERP=/system/bin/linker64)
+          # — the ABI Termux's exec path is built for; bionic resolves DNS via
+          # netd instead of /etc/resolv.conf. 16 KB pages ship on Android 15+
+          # devices: NDK r27+ defaults max-page-size to 16384, older NDKs to
+          # 4096 — pin it explicitly so the artifact does not depend on the
+          # runner image's NDK; verify-arm64-elf.sh asserts the result.
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS: >-
+            -C link-arg=-Wl,-z,max-page-size=16384
         run: |
           set -euo pipefail
           NAME="Dirtybird-Rust-Miner"
@@ -91,11 +118,25 @@ jobs:
           rm -rf "$DIST"; mkdir -p "$DIST"
 
           build() { # $1 = rust target triple
-            cargo zigbuild --locked --release -p "$BIN" --features v114 --target "$1" --bin "$BIN"
+            case "$1" in
+              # cargo-zigbuild has no bionic libc (zig ships glibc/musl/mingw
+              # only), so the android target goes through plain cargo + the
+              # NDK clang wrapper resolved into
+              # CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER above.
+              *-linux-android)
+                cargo build --locked --release -p "$BIN" --features v114 --target "$1" --bin "$BIN" ;;
+              *)
+                cargo zigbuild --locked --release -p "$BIN" --features v114 --target "$1" --bin "$BIN" ;;
+            esac
           }
 
-          # ---- Linux static-musl tarballs (run on any Linux) ----
-          for pair in "amd64:x86_64-unknown-linux-musl" "arm64:aarch64-unknown-linux-musl"; do
+          # ---- Linux tarballs ----
+          # amd64/arm64: static-musl, generic Linux. android-arm64: bionic
+          # dynamic PIE for Termux (the musl arm64 build cannot resolve DNS on
+          # Android and does not survive linker64's exec path).
+          for pair in "amd64:x86_64-unknown-linux-musl" \
+                      "arm64:aarch64-unknown-linux-musl" \
+                      "android-arm64:aarch64-linux-android"; do
             arch="${pair%%:*}"; target="${pair#*:}"
             build "$target"
             stem="${NAME}-${arch}-${VER}"; d="$DIST/$stem"
@@ -120,7 +161,7 @@ jobs:
           ( cd "$DIST" && sha256sum *.zip *.tar.gz > SHA256SUMS.txt )
           echo "=== dist ==="; ls -1 "$DIST"
 
-      - name: Install qemu-user (arm64 smoke test)
+      - name: Install qemu-user (musl arm64 smoke test only — qemu cannot exec bionic)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user-static
@@ -137,15 +178,25 @@ jobs:
           BIN="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-amd64-$VER/dero-miner"
           test "$("$BIN" --version)" = "dero-miner ${VER#v}"
 
-          # ---- arm64: static-PIE policy + first-ever execution of the artifact ----
-          # The od/readelf asserts are the Android gate (qemu runs ET_EXEC fine);
-          # the qemu run proves the shipped binary actually starts (musl init,
-          # TLS setup). Both are required, on the packaged artifact, pre-publish.
+          # ---- arm64 (musl, generic Linux): static-PIE policy + execution ----
+          # The readelf asserts pin the static-PIE contract; the qemu run
+          # proves the packaged binary actually starts (musl init, TLS setup).
           tar -xzf "Dirtybird-Rust-Miner-arm64-$VER.tar.gz" \
             -C "$RUNNER_TEMP/rust-miner-smoke"
           ARM="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-arm64-$VER/dero-miner"
           ../scripts/verify-arm64-elf.sh "$ARM"
           test "$(qemu-aarch64-static "$ARM" --version)" = "dero-miner ${VER#v}"
+
+          # ---- android-arm64 (bionic, the Termux artifact): ELF policy ----
+          # There is NO execution gate here and there cannot be one:
+          # qemu-user cannot run a bionic binary (it would need
+          # /system/bin/linker64 + /system/lib64) and an x86_64 runner cannot
+          # boot an arm64 emulator. These ELF asserts plus the on-device exec
+          # probe in scripts/termux-setup.sh are the whole safety net.
+          tar -xzf "Dirtybird-Rust-Miner-android-arm64-$VER.tar.gz" \
+            -C "$RUNNER_TEMP/rust-miner-smoke"
+          AND="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-android-arm64-$VER/dero-miner"
+          ../scripts/verify-arm64-elf.sh "$AND" bionic
 
       - name: Publish GitHub Release
         env:

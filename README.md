@@ -89,16 +89,22 @@ dero-miner --sustained -t 24 --secs 30  # honest fixed-window hashrate
 ## Android (Termux)
 
 Requires a 64-bit ARM (aarch64) Android device, [Termux](https://termux.dev/), and release
-v0.2.5 or newer (earlier arm64 binaries are non-PIE, which Android refuses to run):
+v0.2.7 or newer (earlier releases have no Android-native binary — Termux execs through
+Android's own linker, which a musl static-PIE does not survive, and musl DNS cannot
+resolve on Android):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Dirtybird99/Dirtybird-Rust-Miner/main/scripts/termux-setup.sh | bash
 ```
 
-The installer downloads `Dirtybird-Rust-Miner-arm64-v*.tar.gz` from the latest release,
-verifies it against `SHA256SUMS.txt`, prompts for daemon/wallet/threads (persisted; re-run
-with `--reconfigure` to change, `--update` to upgrade, `--uninstall` to remove), takes a
-wake-lock so Android Doze doesn't pause mining, and auto-restarts the miner if it exits.
+The installer downloads `Dirtybird-Rust-Miner-android-arm64-v*.tar.gz` from the latest
+release, verifies it against `SHA256SUMS.txt`, prompts for daemon/wallet/threads (persisted;
+re-run with `--reconfigure` to change, `--update` to upgrade, `--uninstall` to remove), takes
+a wake-lock so Android Doze doesn't pause mining, and auto-restarts the miner if it exits.
+
+Note the arm64 artifact split: `arm64` = static-musl for generic arm64 Linux (SBCs, arm64
+VMs) and **will not run on Android**; `android-arm64` = bionic-native, the only one Termux
+can exec and the only one that can resolve DNS on Android.
 
 Take the pool (option 1, the default) on a phone. The solo nodes pay out at network
 difficulty, which at phone hashrates means hours between rewards — the counters sit at
