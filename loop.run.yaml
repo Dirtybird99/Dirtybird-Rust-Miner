@@ -1,0 +1,68 @@
+# optimize-loop binding: minimize aarch64 ns/hash under a byte-exactness gate.
+#
+# Metric comes from a native GitHub `ubuntu-24.04-arm` runner, NOT from qemu:
+# TCG emulates instructions without modelling latency, ports or caches, so it
+# reports roughly no change for the candidates worth making. qemu keeps its job
+# as a correctness gate in ci.yml.
+
+mode: code
+
+# --- artifact: ONLY these may be edited --------------------------------------
+editable_files:
+  - bench/arm64-build.env          # build profile + RUSTFLAGS (LTO, target-cpu)
+  - astrobwt/src/v114.rs           # descriptor suffix array (72.8% of the hash)
+  - astrobwt/src/sha256_x2.rs      # 2-way SHA kernel (21.0% of the hash)
+  - astrobwt/src/ops_generated.rs  # byte op loop (6.0% of the hash)
+  - astrobwt/src/sais32.rs         # SA entry points
+
+# --- correctness gate: byte-exactness, native on the arm64 runner ------------
+# 1) aarch64_hw_sha256 with DERO_REQUIRE_AARCH64_SHA2=1 -- a build-flag change
+#    that silently dropped to software SHA would otherwise look like a win here
+#    and be a 3x regression on a phone.
+# 2) the kat example's cross-implementation answer for pow("a"), asserted on the
+#    printed verdict rather than the exit status.
+# 3) v114_matches_golden_fixture, which asserts pow + fused + SA digests per
+#    case, so BOTH suffix-array paths stay covered even though only one is
+#    measured.
+# Each assertion requires a NONZERO passing test count: libtest exits 0 when a
+# filter matches nothing, and this repo has already shipped a gate that reported
+# "0 passed; 13 filtered out" while looking green.
+gate_cmd: "bash scripts/arm64-loop-run.sh gate"
+
+# --- metric: median ns/hash for the frozen SA arm ----------------------------
+# Reads the SHA-keyed result the gate cached from the SAME CI run and the SAME
+# build; never dispatches, and hard-fails on a SHA mismatch rather than
+# returning a stale number.
+metric_cmd: "bash scripts/arm64-loop-run.sh metric"
+
+sandbox_root: ./sandbox
+budget: 8
+patience: 3
+
+# --- PHASE 0 RESULTS (frozen; these are measurements, not choices) -----------
+# runner:           ubuntu-24.04-arm = Neoverse-N2, 4 cores, 16 GB,
+#                   hwcaps include sha2 (so the hardware SHA path executes);
+#                   perf_event_paranoid=4 so cycle counting is unavailable;
+#                   no cpufreq sysfs, so big.LITTLE cannot be studied here.
+# sa_config:        materialized  -- won at BOTH occupancies, contradicting the
+#                   x86-derived heuristic: 1T 708_315 vs fused 737_112 (-3.9%),
+#                   4T 181_706 vs fused 186_844 (-2.8%).
+# threads:          4 (nproc)
+# iters:            2000 per thread per repeat (fixed work)
+# repeats:          7, first discarded as warmup
+# keep_threshold:   1.5%  -- the floor, not noise-driven: between-job CV is only
+#                   0.23% (within-job 0.26-0.30%), so paired-ABBA is unnecessary.
+# stage_profile:    suffix-array 72.80% | final-sha256 20.99% |
+#                   op-loop 6.01% | prologue 0.20%   (705_436 ns/hash, 1 thread)
+#
+# The profile is what orders the candidates, and it demoted the one that looked
+# most attractive on paper: the opcode LUT targets the op loop, so its entire
+# ceiling is 6%. SHA-256 at 21% clears the ">20% => promote" rule for a 2-way
+# ARM kernel, and the suffix array at 73% is where anything large must come from.
+
+# --- NEVER editable (the measuring instrument and its ground truth) ----------
+#   .github/workflows/arm64-bench.yml
+#   astrobwt/examples/arm_bench.rs
+#   astrobwt/examples/kat.rs
+#   astrobwt/tests/**   astrobwt/src/v114_golden_tests.rs
+#   scripts/arm64-loop-run.sh
