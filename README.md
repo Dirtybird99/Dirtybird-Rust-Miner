@@ -135,6 +135,11 @@ the same. It does hold two suffix arrays in flight, which trades cache footprint
 scheduling, so on a device with small caches it may be the wrong trade: `--no-2way` (or
 `MINER_2WAY=0`) turns it off, and it is worth comparing on your own hardware.
 
+v0.2.10 reworks the console for small screens. The status line now shrinks a field at a time
+instead of collapsing, so a phone-width terminal keeps the height, counters and uptime
+(`[DB] 5.04 KH/s | H:7386579 MB:0 B:0 R:0 | 00:01:17`) rather than dropping to a bare rate, and
+startup is a set of timestamped records that report the connection and how long it took.
+
 Use v0.2.8 or newer for phone hashrate. v0.2.7 hashed with `sha2`'s software rounds, and
 since every AstroBWTv3 hash SHA-256s ~270 KB of suffix-array output (~4,200 compressions),
 that stage dominated everything else on ARM. v0.2.8 enables the ARMv8 crypto extensions
