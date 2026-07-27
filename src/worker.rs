@@ -439,9 +439,10 @@ pub fn mine_thread(
 
         let mut on_share = |work: &[u8; MINIBLOCK_SIZE]| {
             if debug {
-                eprintln!(
+                crate::debug!(
                     "[worker {tid}] found miniblock (submitting) difficulty={} height={}",
-                    myjob.difficulty, myjob.height
+                    myjob.difficulty,
+                    myjob.height
                 );
             }
             // fmt.Sprintf("%x", work[:]) == lowercase hex
@@ -497,7 +498,7 @@ pub fn mine_thread(
                 // Go logs "Blockwork could not be decoded successfully" + 1s
                 // (this is also the idle path before the first job arrives).
                 if debug && !myjob.blockhashing_blob.is_empty() {
-                    eprintln!(
+                    crate::debug!(
                         "[worker {tid}] blockwork could not be decoded: {:?}",
                         myjob.blockhashing_blob
                     );
@@ -505,12 +506,12 @@ pub fn mine_thread(
                 std::thread::sleep(Duration::from_secs(1));
             }
             Err(GrindError::BadVersion(v)) => {
-                eprintln!("[worker {tid}] Unknown version {v}, please check for updates");
+                crate::warn!("[worker {tid}] Unknown version {v}, please check for updates");
                 std::thread::sleep(Duration::from_secs(1));
             }
             Err(GrindError::BadDifficulty) => {
                 if debug {
-                    eprintln!("[worker {tid}] bad difficulty {:?}", myjob.difficulty);
+                    crate::debug!("[worker {tid}] bad difficulty {:?}", myjob.difficulty);
                 }
                 std::thread::sleep(Duration::from_secs(1));
             }
