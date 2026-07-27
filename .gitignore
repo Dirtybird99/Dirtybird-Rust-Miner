@@ -21,6 +21,11 @@
 # Build logs
 *.log
 
+# arm64 optimize-loop scratch: durable best/ snapshot, ledger, cached CI
+# results. The audit trail that matters is the perf/arm64-loop branch and the
+# winning change set, not this working state.
+/sandbox/
+
 # Obsidian-vault research notebooks (they live in the Obsidian vault, with working
 # wikilinks; excluded here so the public repo has no broken [[links]])
 /optimization-journey.md
