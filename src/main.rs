@@ -187,9 +187,27 @@ fn main() {
     // +5.3% at 20T on the 13700HX. The FUSED stream (no materialization) wins at
     // FULL occupancy (24-thread bandwidth saturation). Auto-select by occupancy;
     // `--fused` forces fused. An explicit DERO_MATERIALIZE env is always honored.
-    if std::env::var_os("DERO_MATERIALIZE").is_none() {
-        let full_occupancy = threads >= cpus.max(1);
-        if !cli.fused && !full_occupancy {
+    // The occupancy split above is an x86 measurement and does not transfer to
+    // aarch64. Measured on a native Neoverse-N2 runner (arm_bench, fixed work,
+    // 7 repeats, within-job spread <= 1.4%), materializing wins at BOTH ends of
+    // the occupancy range rather than only when under-subscribed:
+    //     1 thread        fused 737_112 ns/hash   materialized 708_315  (-3.9%)
+    //     4 of 4 threads  fused 186_844 ns/hash   materialized 181_706  (-2.8%)
+    // Note the large-page benefit that motivates materializing on Windows is a
+    // no-op off it (astrobwt/src/lpbuf.rs), so this is bandwidth and control
+    // flow, not TLB coverage. In practice a phone at `-t 7` of 8 cores already
+    // took this branch via the under-subscription rule; arch-gating it only
+    // changes the full-occupancy case, and aligns it with measurement.
+    // CI silicon is not phone silicon (an N2 has 1 MiB L2/core and 128 MiB L3
+    // against a phone's far smaller caches, which is exactly what a doubled SA
+    // working set is sensitive to), so this is pending an on-device A/B.
+    if std::env::var_os("DERO_MATERIALIZE").is_none() && !cli.fused {
+        let materialize = if cfg!(target_arch = "aarch64") {
+            true
+        } else {
+            threads < cpus.max(1)
+        };
+        if materialize {
             std::env::set_var("DERO_MATERIALIZE", "1");
         }
     }
