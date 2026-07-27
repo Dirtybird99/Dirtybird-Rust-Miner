@@ -1,0 +1,94 @@
+name: arm64-bench
+
+# Native aarch64 measurement rig.
+#
+# Everything else in CI runs aarch64 under qemu, which is correct but tells you
+# NOTHING about speed: TCG emulates instructions without modelling latency,
+# issue ports or caches, so it reports roughly no change for the optimizations
+# worth making. GitHub's `ubuntu-24.04-arm` runners are real ARMv8 silicon and
+# are free for public repositories, so this workflow is where arm64 performance
+# claims get their numbers.
+#
+# Dispatch-only on purpose: a push trigger fires on every intermediate commit
+# and makes runs impossible to attribute to a specific candidate.
+#
+# Once the optimize-loop starts, THIS FILE IS THE MEASURING INSTRUMENT and must
+# not be edited to make a number move -- build knobs under test live in
+# bench/arm64-build.env instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "smoke = runner facts only (no build)"
+        default: smoke
+        type: choice
+        options:
+          - smoke
+      repeats:
+        description: "bench repeats (first discarded as warmup)"
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Runner facts
+        run: |
+          set -euo pipefail
+          echo "=== identity ==="
+          uname -srm
+          echo "nproc: $(nproc)"
+          echo "pagesize: $(getconf PAGESIZE)"
+
+          echo "=== cpu ==="
+          # Model + the hwcap flags that decide whether this runner can even
+          # exercise the hardware SHA-256 path the miner depends on (`sha2`),
+          # plus `asimd` for NEON. A runner without them would make every
+          # measurement here meaningless for a phone.
+          lscpu || true
+          echo "--- /proc/cpuinfo Features ---"
+          grep -m1 -E '^(Features|CPU implementer|CPU part)' /proc/cpuinfo || true
+          sed -n 's/^Features[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo | head -n1 | tr ' ' '\n' |
+            grep -xE 'sha2|sha512|aes|asimd|crc32' || echo "(no crypto hwcaps found)"
+
+          echo "=== memory ==="
+          free -m || true
+
+          echo "=== perf / PMU availability ==="
+          # Decides whether `perf stat -e cycles` is usable as a lower-noise
+          # fallback metric on this shared VM (P0-6 fallback F2).
+          cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo "no perf_event_paranoid"
+          if command -v perf >/dev/null 2>&1; then
+            perf stat -e cycles true 2>&1 | tail -n 5 || echo "perf present but cycles unavailable"
+          else
+            echo "perf: not installed"
+          fi
+
+          echo "=== cpufreq topology (big.LITTLE detection source) ==="
+          # A hosted VM is homogeneous, so this is expected to be absent -- which
+          # is itself the finding that keeps big-core affinity out of the loop
+          # and on the phone.
+          if ls /sys/devices/system/cpu/cpu0/cpufreq >/dev/null 2>&1; then
+            for c in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq; do
+              echo "$c = $(cat "$c")"
+            done
+          else
+            echo "no cpufreq sysfs (expected on a hosted VM)"
+          fi
+
+          echo "=== toolchain ==="
+          rustc -vV || echo "no rustc preinstalled"
+
+      - name: Mode
+        run: |
+          set -euo pipefail
+          echo "mode=${{ inputs.mode }} repeats=${{ inputs.repeats }}"
+          echo "smoke mode: no build, no benchmark -- this run only answers"
+          echo "'does ubuntu-24.04-arm resolve and what silicon is it?'"
