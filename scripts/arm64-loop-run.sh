@@ -28,6 +28,21 @@ REPEATS="${ARM64_REPEATS:-7}"
 
 die() { echo "arm64-loop-run: $*" >&2; exit 1; }
 
+# Read one dotted path out of the cached JSON. Deliberately not `jq`: this runs
+# on the maintainer's Windows box under Git Bash, where jq is not present but
+# Python is. (`gh --jq` elsewhere in this script is gh's own built-in and needs
+# no external binary.)
+PY="$(command -v python3 || command -v python || true)"
+jget() { # $1 = file, $2 = dotted path
+  "$PY" -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+for k in sys.argv[2].strip(".").split("."):
+    d = d[k]
+print(d)
+' "$1" "$2"
+}
+
 # The SA arm to report as THE metric. Frozen by phase 0 (fused vs materialized
 # is a definition of what is being measured, not something a candidate may
 # change mid-loop). Absent = refuse to measure rather than pick a default and
@@ -45,7 +60,7 @@ frozen_arm() {
 cmd_gate() {
   mkdir -p "$SANDBOX"
   command -v gh >/dev/null || die "gh CLI not found"
-  command -v jq >/dev/null || die "jq not found"
+  [ -n "$PY" ] || die "python not found (needed to read the result JSON)"
 
   git add -A
   # --allow-empty: an iteration that reverts to best legitimately has no diff,
@@ -88,13 +103,13 @@ cmd_gate() {
   mv "$SANDBOX/bench-result.json" "$RESULT"
 
   local got_sha gate
-  got_sha="$(jq -r .commit "$RESULT")"
-  gate="$(jq -r .gate "$RESULT")"
+  got_sha="$(jget "$RESULT" .commit)"
+  gate="$(jget "$RESULT" .gate)"
   [ "$got_sha" = "$sha" ] || die "result is for $got_sha, tree is $sha"
   [ "$gate" = "pass" ] || { echo "GATE=fail ($gate)" >&2; return 1; }
 
-  echo "GATE=pass  fused=$(jq -r .fused.ns_per_hash_median "$RESULT") ns/hash" \
-       " materialized=$(jq -r .materialized.ns_per_hash_median "$RESULT") ns/hash" >&2
+  echo "GATE=pass  fused=$(jget "$RESULT" .fused.ns_per_hash_median) ns/hash" \
+       " materialized=$(jget "$RESULT" .materialized.ns_per_hash_median) ns/hash" >&2
 }
 
 cmd_metric() {
@@ -102,11 +117,11 @@ cmd_metric() {
   local arm sha got
   arm="$(frozen_arm)"
   sha="$(git rev-parse HEAD)"
-  got="$(jq -r .commit "$RESULT")"
+  got="$(jget "$RESULT" .commit)"
   # The gate commits, so HEAD is the measured commit. Any drift means the tree
   # moved after measurement and the cached number describes different code.
   [ "$got" = "$sha" ] || die "cached result is for $got but HEAD is $sha -- stale metric"
-  jq -r ".${arm}.ns_per_hash_median" "$RESULT"
+  jget "$RESULT" ".${arm}.ns_per_hash_median"
 }
 
 case "${1:-}" in
