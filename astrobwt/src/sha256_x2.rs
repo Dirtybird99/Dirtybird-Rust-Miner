@@ -12,6 +12,13 @@ pub fn sha256_x2(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
         return unsafe { shani_x2(a, b) };
     }
 
+    #[cfg(target_arch = "aarch64")]
+    if std::arch::is_aarch64_feature_detected!("sha2") {
+        // SAFETY: the runtime check above guarantees the ARMv8 crypto
+        // extensions, which is all `aarch64::hash` requires.
+        return unsafe { aarch64::hash(a, b) };
+    }
+
     (Sha256::digest(a).into(), Sha256::digest(b).into())
 }
 
@@ -498,6 +505,162 @@ mod x86 {
 
 #[cfg(target_arch = "x86_64")]
 use x86::hash as shani_x2;
+
+/// Two-stream SHA-256 on the ARMv8 crypto extensions.
+///
+/// Motivation is Amdahl, measured: on a Neoverse-N2 the final SHA-256 over the
+/// suffix array is 21% of an AstroBWTv3 hash (~4,200 compressions of ~270 KB),
+/// second only to the suffix array itself. A single SHA-256 stream cannot fill
+/// the pipeline because SHA256H is multi-cycle and every round depends on the
+/// last; two independent messages can. The instruction count is unchanged --
+/// the win, if any, is purely scheduling.
+///
+/// Self-contained rather than sharing the x86 module's constants and helpers,
+/// so the proven SHA-NI path is not touched at all.
+#[cfg(target_arch = "aarch64")]
+mod aarch64 {
+    use core::arch::aarch64::*;
+
+    const INITIAL: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+
+    /// Four rounds: add the round constants, then the two ARMv8 hash steps.
+    macro_rules! quad {
+        ($abcd:ident, $efgh:ident, $w:expr, $k:expr) => {{
+            let tmp = vaddq_u32($w, vld1q_u32(K.as_ptr().add($k)));
+            let prev = $abcd;
+            $abcd = vsha256hq_u32(prev, $efgh, tmp);
+            $efgh = vsha256h2q_u32($efgh, prev, tmp);
+        }};
+    }
+
+    /// One 64-byte block for ONE lane, expanded inline at the call site.
+    ///
+    /// A macro rather than an `#[inline(always)]` helper because rustc rejects
+    /// `#[inline(always)]` together with `#[target_feature]`, and a plain
+    /// `#[inline]` hint on a 64-round body is one cost-model decision away from
+    /// not inlining -- which would put the two lanes in separate scheduling
+    /// regions and delete the entire point of this kernel. Macro hygiene gives
+    /// each expansion its own temporaries, so the lanes cannot collide.
+    macro_rules! block {
+        ($abcd:ident, $efgh:ident, $ptr:expr) => {{
+            let p: *const u8 = $ptr;
+            let abcd0 = $abcd;
+            let efgh0 = $efgh;
+
+            let mut w0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p)));
+            let mut w1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(16))));
+            let mut w2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(32))));
+            let mut w3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(48))));
+
+            quad!($abcd, $efgh, w0, 0);
+            quad!($abcd, $efgh, w1, 4);
+            quad!($abcd, $efgh, w2, 8);
+            quad!($abcd, $efgh, w3, 12);
+
+            let mut k = 16usize;
+            while k < 64 {
+                w0 = vsha256su1q_u32(vsha256su0q_u32(w0, w1), w2, w3);
+                quad!($abcd, $efgh, w0, k);
+                w1 = vsha256su1q_u32(vsha256su0q_u32(w1, w2), w3, w0);
+                quad!($abcd, $efgh, w1, k + 4);
+                w2 = vsha256su1q_u32(vsha256su0q_u32(w2, w3), w0, w1);
+                quad!($abcd, $efgh, w2, k + 8);
+                w3 = vsha256su1q_u32(vsha256su0q_u32(w3, w0), w1, w2);
+                quad!($abcd, $efgh, w3, k + 12);
+                k += 16;
+            }
+
+            $abcd = vaddq_u32($abcd, abcd0);
+            $efgh = vaddq_u32($efgh, efgh0);
+        }};
+    }
+
+    /// Padding block(s). Identical arithmetic to the x86 sibling's `tail`.
+    fn tail(input: &[u8]) -> ([[u8; 64]; 2], usize) {
+        let rem = input.len() % 64;
+        let mut out = [[0u8; 64]; 2];
+        out[0][..rem].copy_from_slice(&input[input.len() - rem..]);
+        out[0][rem] = 0x80;
+        let blocks = if rem < 56 { 1 } else { 2 };
+        out[blocks - 1][56..].copy_from_slice(&((input.len() as u64) * 8).to_be_bytes());
+        (out, blocks)
+    }
+
+    fn finish(abcd: uint32x4_t, efgh: uint32x4_t) -> [u8; 32] {
+        let mut s = [0u32; 8];
+        // SAFETY: two vector stores into an eight-word buffer.
+        unsafe {
+            vst1q_u32(s.as_mut_ptr(), abcd);
+            vst1q_u32(s.as_mut_ptr().add(4), efgh);
+        }
+        let mut out = [0u8; 32];
+        for (dst, word) in out.chunks_exact_mut(4).zip(s) {
+            dst.copy_from_slice(&word.to_be_bytes());
+        }
+        out
+    }
+
+    /// Hash two independent messages, interleaving their common run of full
+    /// blocks.
+    ///
+    /// Unequal lengths pair only `min(blocks_a, blocks_b)` and finish each
+    /// remainder single-stream, rather than the x86 module's per-lane masking:
+    /// AstroBWTv3 hands this two suffix arrays whose lengths differ by a few
+    /// percent at most, so the unpaired tail is negligible and this shape is far
+    /// easier to argue correct.
+    ///
+    /// # Safety
+    /// The caller must have verified the `sha2` hwcap.
+    #[target_feature(enable = "sha2")]
+    pub unsafe fn hash(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
+        let mut aa = vld1q_u32(INITIAL.as_ptr());
+        let mut ae = vld1q_u32(INITIAL.as_ptr().add(4));
+        let mut ba = aa;
+        let mut be = ae;
+
+        let na = a.len() / 64;
+        let nb = b.len() / 64;
+        let paired = na.min(nb);
+
+        for i in 0..paired {
+            block!(aa, ae, a.as_ptr().add(i * 64));
+            block!(ba, be, b.as_ptr().add(i * 64));
+        }
+        for i in paired..na {
+            block!(aa, ae, a.as_ptr().add(i * 64));
+        }
+        for i in paired..nb {
+            block!(ba, be, b.as_ptr().add(i * 64));
+        }
+
+        let (ta, tan) = tail(a);
+        for blk in ta.iter().take(tan) {
+            block!(aa, ae, blk.as_ptr());
+        }
+        let (tb, tbn) = tail(b);
+        for blk in tb.iter().take(tbn) {
+            block!(ba, be, blk.as_ptr());
+        }
+
+        (finish(aa, ae), finish(ba, be))
+    }
+}
 
 #[cfg(test)]
 mod tests {
