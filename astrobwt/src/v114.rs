@@ -1051,12 +1051,18 @@ fn write_fused_runs_to_sa(view: &Stage5View, scratch: &mut FusedScratch, out: &m
             if !stage5_run_is_literal(run) {
                 let begin = stage5_run_begin(run) as usize;
                 let count = stage5_run_count(run) as usize;
-                for (slot, &pos) in out[out_pos..out_pos + count]
-                    .iter_mut()
-                    .zip(&scratch.arena_positions[begin..begin + count])
-                {
-                    *slot = pos as i32;
-                }
+                // The C++ moves this run with a single memcpy out of the arena
+                // (l.1768); the port had drifted to an elementwise copy because
+                // `out` is `i32` while the arena is `u32`. That cast is a pure
+                // reinterpretation -- `as i32` preserves every bit of a `u32`,
+                // and this function's contract is already the little-endian byte
+                // image -- so `bytemuck` restores the bulk copy with no `unsafe`
+                // and no change to the bytes written. The fused sibling never
+                // lost it (see `write_positions`); only this, the materialized
+                // arm, did -- which is the arm aarch64 runs.
+                out[out_pos..out_pos + count].copy_from_slice(bytemuck::cast_slice(
+                    &scratch.arena_positions[begin..begin + count],
+                ));
                 out_pos += count;
             } else {
                 out[out_pos] = stage5_run_begin(run) as i32;
