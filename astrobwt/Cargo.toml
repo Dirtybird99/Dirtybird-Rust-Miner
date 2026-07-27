@@ -82,3 +82,9 @@ required-features = ["v114", "shani2"]
 [[example]]
 name = "x2_mt"
 required-features = ["v114", "shani2"]
+
+# The frozen arm64 measurement harness. Needs shani2 for its 2way mode, which
+# reaches astrobwtv3_x2 -- the path --sustained and --bench structurally cannot.
+[[example]]
+name = "arm_bench"
+required-features = ["v114", "shani2"]
