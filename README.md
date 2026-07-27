@@ -101,6 +101,12 @@ dero-miner --sustained -t 24 --secs 30  # honest fixed-window hashrate
 `-w` is the reward address (a public DERO address), `-d` the daemon/pool getwork endpoint
 (default `dero-node.mysrv.cloud:10100`), `-t` the thread count (default: all logical CPUs).
 
+Progress and events go to **stderr**: the status line is repainted in place once a second and
+shrinks to fit narrow terminals, keeping as many fields as the width allows. Redirecting
+(`dero-miner … 2> miner.log`) switches it to complete, newline-terminated records with no colour
+and no cursor control, so the log stays greppable. `NO_COLOR=1` turns colour off while keeping the
+in-place repaint.
+
 ## Android (Termux)
 
 Requires a 64-bit ARM (aarch64) Android device, [Termux](https://termux.dev/), and release

@@ -27,11 +27,12 @@ mod affinity;
 mod bench;
 mod job;
 mod sustained;
+mod term;
 mod tls;
 mod worker;
 mod ws;
 
-use std::io::{self, BufRead, IsTerminal, Write as _};
+use std::io::{self, BufRead, Write as _};
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -40,6 +41,7 @@ use clap::Parser;
 
 use dero_protocol::Address;
 use job::{GetBlockTemplateResult, SubmitBlockParams};
+use term::{LineBuf, Palette};
 use worker::Shared;
 
 /// Go: config.MAJOR_HF2_HEIGHT — mainnet 481600, testnet 4 (config/config.go:108,129).
@@ -131,7 +133,27 @@ struct Cli {
     no_2way: bool,
 }
 
+/// `dero1qyq...hnwk` — enough to recognise the address, short enough not to
+/// wrap a phone terminal twice.
+///
+/// The ASCII guard is not theoretical: `wallet_address` falls back to the raw
+/// argument when re-encoding fails, so a multi-byte character straddling the
+/// cut would panic the miner at startup.
+fn elide_wallet(addr: &str) -> String {
+    const HEAD: usize = 8;
+    const TAIL: usize = 4;
+    if !addr.is_ascii() || addr.len() <= HEAD + TAIL + 3 {
+        return addr.to_string();
+    }
+    format!("{}...{}", &addr[..HEAD], &addr[addr.len() - TAIL..])
+}
+
 fn main() {
+    // Before anything prints, including the argument diagnostics below: this
+    // resolves whether stderr is a terminal and turns on ANSI processing, which
+    // on Windows is what stops escapes rendering as literal text.
+    term::init();
+
     let cli = Cli::parse();
 
     let cpus = std::thread::available_parallelism()
@@ -139,7 +161,7 @@ fn main() {
         .unwrap_or(1);
     let mut threads = cli.mining_threads.unwrap_or(cpus as i64);
     if threads > cpus as i64 {
-        eprintln!(
+        crate::warn!(
             "Mining threads is more than available CPUs. This is NOT optimal thread_count={threads} max_possible={cpus}"
         );
     }
@@ -159,7 +181,7 @@ fn main() {
         panic!("Invalid parameters");
     }
     if threads > 255 {
-        eprintln!("This program supports maximum 256 CPU cores. available={threads}");
+        crate::warn!("This program supports maximum 256 CPU cores. available={threads}");
         threads = 255;
     }
     let threads = threads as usize;
@@ -215,13 +237,13 @@ fn main() {
     // --wallet-address: bech32-validated + network prefix check
     // (globals.ParseValidateAddress; miner.go:149-156).
     let Some(wallet_raw) = cli.wallet_address.as_deref() else {
-        eprintln!("Wallet address is required (--wallet-address=dero1...)");
+        crate::error!("Wallet address is required (--wallet-address=dero1...)");
         std::process::exit(1);
     };
     let wallet_address = match Address::from_string(wallet_raw) {
         Ok(addr) => {
             if addr.mainnet == cli.testnet {
-                eprintln!(
+                crate::error!(
                     "Wallet address has the wrong network prefix (expected {})",
                     if cli.testnet {
                         "deto1... (testnet)"
@@ -235,7 +257,7 @@ fn main() {
             addr.to_string().unwrap_or_else(|_| wallet_raw.to_string())
         }
         Err(e) => {
-            eprintln!("Wallet address is invalid: {e}");
+            crate::error!("Wallet address is invalid: {e}");
             std::process::exit(1);
         }
     };
@@ -257,18 +279,43 @@ fn main() {
         MAJOR_HF2_HEIGHT_MAINNET
     };
 
-    eprintln!("DERO Stargate HE AstroBWT miner (Rust port)");
-    eprintln!(
-        "OS:{} ARCH:{} THREADS:{} MODE:{}",
+    // Startup block. The wallet is elided because it is long enough to wrap
+    // twice on a phone, and it is echoed back by the installer anyway.
+    crate::info!(
+        "Dirtybird Rust Miner v{} ({}/{})",
+        env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
-        std::env::consts::ARCH,
-        threads,
-        if cli.testnet { "testnet" } else { "mainnet" }
+        std::env::consts::ARCH
     );
-    eprintln!("System will mine to \"{wallet_address}\" with {threads} threads. Good Luck!!");
+    crate::info!("Server:  {daemon_rpc_address}");
+    crate::info!("Wallet:  {}", elide_wallet(&wallet_address));
+    crate::info!("Threads: {threads}");
+    if cli.testnet {
+        crate::info!("Network: testnet");
+    }
+    eprintln!();
 
     let shared = Arc::new(Shared::new());
     let (submit_tx, submit_rx) = mpsc::channel::<SubmitBlockParams>();
+
+    // Optional 2 MB large pages for the per-worker scratch (op-loop stream + SA).
+    // Must run before any worker allocates `AstroBwtScratch`. Mirrors the
+    // `--sustained` harness (sustained.rs); off by default pending per-CPU A/B.
+    //
+    // Ordered ahead of the getwork spawn so its line cannot race `Connecting`:
+    // the constraint is only that it precede worker allocation, and workers
+    // start below.
+    if cli.large_pages {
+        let lp = dero_astrobwt::enable_large_pages();
+        crate::info!(
+            "Large pages: {}",
+            if lp {
+                "2MB enabled"
+            } else {
+                "unavailable (4KB)"
+            }
+        );
+    }
 
     // getwork connection thread (Go: go getwork(wallet_address), miner.go:316)
     {
@@ -280,21 +327,6 @@ fn main() {
             .name("getwork".into())
             .spawn(move || getwork(&daemon, &wallet, &shared, submit_rx, debug))
             .expect("spawn getwork");
-    }
-
-    // Optional 2 MB large pages for the per-worker scratch (op-loop stream + SA).
-    // Must run before any worker allocates `AstroBwtScratch`. Mirrors the
-    // `--sustained` harness (sustained.rs); off by default pending per-CPU A/B.
-    if cli.large_pages {
-        let lp = dero_astrobwt::enable_large_pages();
-        eprintln!(
-            "large pages: {}",
-            if lp {
-                "2MB enabled"
-            } else {
-                "unavailable (4KB)"
-            }
-        );
     }
 
     // worker threads (Go: go mineblock(i), miner.go:318-320)
@@ -339,14 +371,18 @@ fn getwork(
         if shared.exit.load(Ordering::Relaxed) {
             return;
         }
-        eprintln!("connecting to url=wss://{daemon_rpc_address}{path}");
+        crate::info!("Connecting ({daemon_rpc_address})");
+        // Spans DNS + TCP + TLS + the WebSocket upgrade, reported only on
+        // success. Note this is a CONNECT time, not a ping: our TLS is the
+        // pure-Rust provider, so a software P-256 handshake is inside it.
+        let connect_start = Instant::now();
 
         // dial + TLS (long timeouts for the handshakes)
         let stream = match tls::connect_tls(daemon_rpc_address, Duration::from_secs(10)) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Error connecting to server: {e} server_address={daemon_rpc_address}");
-                eprintln!("Will try in 10 secs server_address={daemon_rpc_address}");
+                crate::error!("Connection failed ({daemon_rpc_address}): {e}");
+                crate::info!("Retrying in 10s");
                 std::thread::sleep(Duration::from_secs(10)); // miner.go:417
                 continue;
             }
@@ -354,8 +390,8 @@ fn getwork(
         let mut conn = match ws::WsClient::handshake(stream, daemon_rpc_address, &path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Error connecting to server: {e} server_address={daemon_rpc_address}");
-                eprintln!("Will try in 10 secs server_address={daemon_rpc_address}");
+                crate::error!("Connection failed ({daemon_rpc_address}): {e}");
+                crate::info!("Retrying in 10s");
                 std::thread::sleep(Duration::from_secs(10));
                 continue;
             }
@@ -366,8 +402,12 @@ fn getwork(
             .sock
             .set_read_timeout(Some(Duration::from_millis(100)))
         {
-            eprintln!("set_read_timeout: {e}");
+            crate::warn!("set_read_timeout: {e}");
         }
+        crate::info!(
+            "Connected ({daemon_rpc_address}) ({} ms)",
+            connect_start.elapsed().as_millis()
+        );
 
         // drop shares queued while disconnected — their jobs are stale anyway
         // (Go simply loses them when connection.WriteJSON panics/errors)
@@ -381,10 +421,10 @@ fn getwork(
             while let Ok(share) = submit_rx.try_recv() {
                 let txt = serde_json::to_string(&share).expect("submit serialize");
                 if debug {
-                    eprintln!("submitting share: {txt}");
+                    crate::debug!("submitting share: {txt}");
                 }
                 if let Err(e) = conn.write_text(txt.as_bytes()) {
-                    eprintln!("connection error (submit): {e}");
+                    crate::error!("connection error (submit): {e}");
                     continue 'reconnect; // immediate redial, like miner.go:425-427
                 }
             }
@@ -394,12 +434,12 @@ fn getwork(
                         Ok(r) => r,
                         Err(e) => {
                             // gorilla ReadJSON would error too => reconnect
-                            eprintln!("connection error (bad job json): {e}");
+                            crate::error!("connection error (bad job json): {e}");
                             continue 'reconnect;
                         }
                     };
                     if debug {
-                        eprintln!("recv: {}", String::from_utf8_lossy(&data).trim_end());
+                        crate::debug!("recv: {}", String::from_utf8_lossy(&data).trim_end());
                     }
                     // miner.go:430-445
                     {
@@ -408,7 +448,7 @@ fn getwork(
                     }
                     shared.job_counter.fetch_add(1, Ordering::Release);
                     if !result.lasterror.is_empty() {
-                        eprintln!("received error: err={}", result.lasterror);
+                        crate::warn!("received error: err={}", result.lasterror);
                     }
                     shared.block_counter.store(result.blocks, Ordering::Relaxed);
                     shared
@@ -421,12 +461,12 @@ fn getwork(
                     shared.our_height.store(result.height, Ordering::Relaxed);
                 }
                 Ok(Some(ws::WsMessage::Close)) => {
-                    eprintln!("connection error: server closed the websocket");
+                    crate::error!("connection error: server closed the websocket");
                     continue 'reconnect;
                 }
                 Ok(None) => {} // read timeout — poll again
                 Err(e) => {
-                    eprintln!("connection error: {e}");
+                    crate::error!("connection error: {e}");
                     continue 'reconnect;
                 }
             }
@@ -486,6 +526,223 @@ fn difficulty_string(difficulty: u64) -> String {
     }
 }
 
+/// Every value the status line can show, sampled once.
+///
+/// Sampling up front rather than re-reading the atomics inside each candidate
+/// layout keeps the fields consistent with one another — the old code loaded
+/// them again per layout, so a job push landing mid-selection could produce a
+/// line whose height and counters came from different jobs.
+struct StatusFields {
+    rate: f64,
+    average: f64,
+    height: u64,
+    mini: u64,
+    blocks: u64,
+    rejected: u64,
+    diff: String,
+    hh: u64,
+    mm: u64,
+    ss: u64,
+    testnet: bool,
+}
+
+impl StatusFields {
+    fn sample(
+        shared: &Shared,
+        rate: f64,
+        average: f64,
+        uptime: Duration,
+        testnet: bool,
+    ) -> StatusFields {
+        let seconds = uptime.as_secs();
+        StatusFields {
+            rate,
+            average,
+            height: shared.our_height.load(Ordering::Relaxed),
+            mini: shared.mini_block_counter.load(Ordering::Relaxed),
+            blocks: shared.block_counter.load(Ordering::Relaxed),
+            rejected: shared.rejected.load(Ordering::Relaxed),
+            diff: difficulty_string(shared.difficulty.load(Ordering::Relaxed)),
+            hh: seconds / 3_600,
+            mm: seconds / 60 % 60,
+            ss: seconds % 60,
+            testnet,
+        }
+    }
+}
+
+/// The layout ladder, widest first (ported from the C miner's `render_tier`,
+/// `console.cpp:186-267`). Each rung drops one field, so a narrowing terminal
+/// degrades a field at a time instead of falling off a cliff — which is what
+/// happens with only three rungs, where a phone loses the height, counters and
+/// uptime all at once the moment the miniblock count reaches double digits.
+type TierRender = fn(&mut LineBuf, &Palette, &StatusFields);
+
+const TIERS: [TierRender; 5] = [
+    render_full,
+    render_medium,
+    render_narrow,
+    render_compact,
+    render_minimal,
+];
+
+/// Full labels, every field. Plain-rendered, this is byte-identical to the
+/// pre-colour status line, which is what lets the existing format test stand
+/// unchanged as a regression fence.
+fn render_full(lb: &mut LineBuf, p: &Palette, s: &StatusFields) {
+    lb.esc(p.label);
+    txt!(lb, "[DIRTYBIRD] ");
+    lb.esc(p.rate);
+    txt!(lb, "{:.2} KH/s", s.rate);
+    lb.esc(p.text);
+    txt!(lb, " (");
+    lb.esc(p.avg);
+    txt!(lb, "{:.2} KH/s avg", s.average);
+    lb.esc(p.text);
+    txt!(lb, ") | ");
+    lb.esc(p.height);
+    txt!(lb, "Height:{}", s.height);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.mini);
+    txt!(lb, "Miniblocks:{}", s.mini);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.block);
+    txt!(lb, "Blocks:{}", s.blocks);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.rej(s.rejected));
+    txt!(lb, "REJ:{}", s.rejected);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.diff);
+    txt!(lb, "Diff:{}", s.diff);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.time);
+    txt!(lb, "{:02}:{:02}:{:02}", s.hh, s.mm, s.ss);
+    // Only the widest rung carries the testnet marker; the narrower ones have
+    // no room, and the startup banner names the network anyway.
+    if s.testnet {
+        lb.esc(p.text);
+        txt!(lb, " | TESTNET");
+    }
+}
+
+/// Abbreviated labels, every field kept.
+fn render_medium(lb: &mut LineBuf, p: &Palette, s: &StatusFields) {
+    lb.esc(p.label);
+    txt!(lb, "[DIRTYBIRD] ");
+    lb.esc(p.rate);
+    txt!(lb, "{:.2} KH/s", s.rate);
+    lb.esc(p.text);
+    txt!(lb, " (");
+    lb.esc(p.avg);
+    txt!(lb, "{:.2} avg", s.average);
+    lb.esc(p.text);
+    txt!(lb, ") | ");
+    lb.esc(p.height);
+    txt!(lb, "H:{}", s.height);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.mini);
+    txt!(lb, "MB:{}", s.mini);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.block);
+    txt!(lb, "B:{}", s.blocks);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.rej(s.rejected));
+    txt!(lb, "R:{}", s.rejected);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.diff);
+    txt!(lb, "D:{}", s.diff);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.time);
+    txt!(lb, "{:02}:{:02}:{:02}", s.hh, s.mm, s.ss);
+}
+
+/// Fits the classic 80-column terminal: drops the average.
+fn render_narrow(lb: &mut LineBuf, p: &Palette, s: &StatusFields) {
+    lb.esc(p.label);
+    txt!(lb, "[DIRTYBIRD] ");
+    lb.esc(p.rate);
+    txt!(lb, "{:.2} KH/s", s.rate);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.height);
+    txt!(lb, "H:{}", s.height);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.mini);
+    txt!(lb, "MB:{}", s.mini);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.block);
+    txt!(lb, "B:{}", s.blocks);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.rej(s.rejected));
+    txt!(lb, "R:{}", s.rejected);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.diff);
+    txt!(lb, "D:{}", s.diff);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.time);
+    txt!(lb, "{:02}:{:02}:{:02}", s.hh, s.mm, s.ss);
+}
+
+/// Phone-sized: short tag, drops the difficulty, keeps the uptime. This is the
+/// rung a ~54-column Termux window renders.
+fn render_compact(lb: &mut LineBuf, p: &Palette, s: &StatusFields) {
+    lb.esc(p.label);
+    txt!(lb, "[DB] ");
+    lb.esc(p.rate);
+    txt!(lb, "{:.2} KH/s", s.rate);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.height);
+    txt!(lb, "H:{}", s.height);
+    lb.esc(p.text);
+    txt!(lb, " ");
+    lb.esc(p.mini);
+    txt!(lb, "MB:{}", s.mini);
+    lb.esc(p.text);
+    txt!(lb, " ");
+    lb.esc(p.block);
+    txt!(lb, "B:{}", s.blocks);
+    lb.esc(p.text);
+    txt!(lb, " ");
+    lb.esc(p.rej(s.rejected));
+    txt!(lb, "R:{}", s.rejected);
+    lb.esc(p.text);
+    txt!(lb, " | ");
+    lb.esc(p.time);
+    txt!(lb, "{:02}:{:02}:{:02}", s.hh, s.mm, s.ss);
+}
+
+/// Rate plus the two counters worth watching.
+fn render_minimal(lb: &mut LineBuf, p: &Palette, s: &StatusFields) {
+    lb.esc(p.label);
+    txt!(lb, "[DB] ");
+    lb.esc(p.rate);
+    txt!(lb, "{:.2} KH/s", s.rate);
+    lb.esc(p.text);
+    txt!(lb, " ");
+    lb.esc(p.mini);
+    txt!(lb, "MB:{}", s.mini);
+    lb.esc(p.text);
+    txt!(lb, " ");
+    lb.esc(p.block);
+    txt!(lb, "B:{}", s.blocks);
+}
+
 fn format_status_line(
     shared: &Shared,
     rate: f64,
@@ -493,25 +750,18 @@ fn format_status_line(
     uptime: Duration,
     testnet: bool,
 ) -> String {
-    let seconds = uptime.as_secs();
-    let mut line = format!(
-        "[DIRTYBIRD] {rate:.2} KH/s ({average:.2} KH/s avg) | Height:{} | \
-         Miniblocks:{} | Blocks:{} | REJ:{} | Diff:{} | {:02}:{:02}:{:02}",
-        shared.our_height.load(Ordering::Relaxed),
-        shared.mini_block_counter.load(Ordering::Relaxed),
-        shared.block_counter.load(Ordering::Relaxed),
-        shared.rejected.load(Ordering::Relaxed),
-        difficulty_string(shared.difficulty.load(Ordering::Relaxed)),
-        seconds / 3_600,
-        seconds / 60 % 60,
-        seconds % 60,
-    );
-    if testnet {
-        line.push_str(" | TESTNET");
-    }
-    line
+    let fields = StatusFields::sample(shared, rate, average, uptime, testnet);
+    let mut lb = LineBuf::new();
+    render_full(&mut lb, &Palette::PLAIN, &fields);
+    lb.text
 }
 
+/// Longest rung that fits, measured in COLUMNS.
+///
+/// Fitting on `LineBuf::width` rather than string length is what makes colour
+/// safe: SGR escapes occupy no columns but plenty of bytes, so a byte-length
+/// comparison would reject every rung on every terminal and pin the output to
+/// the narrowest one.
 fn format_terminal_status_line(
     shared: &Shared,
     rate: f64,
@@ -519,79 +769,54 @@ fn format_terminal_status_line(
     uptime: Duration,
     testnet: bool,
     measured_width: Option<usize>,
-) -> String {
-    let width = status_width_budget(measured_width);
-    let full = format_status_line(shared, rate, average, uptime, testnet);
-    if full.len() <= width {
-        return full;
+    palette: &Palette,
+) -> LineBuf {
+    let budget = status_width_budget(measured_width);
+    let fields = StatusFields::sample(shared, rate, average, uptime, testnet);
+
+    for render in TIERS {
+        let mut lb = LineBuf::new();
+        render(&mut lb, palette, &fields);
+        if lb.width <= budget {
+            lb.esc(palette.reset);
+            return lb;
+        }
     }
 
-    let compact = format!(
-        "[DIRTYBIRD] {rate:.2} KH/s H:{} M:{} B:{} R:{}",
-        shared.our_height.load(Ordering::Relaxed),
-        shared.mini_block_counter.load(Ordering::Relaxed),
-        shared.block_counter.load(Ordering::Relaxed),
-        shared.rejected.load(Ordering::Relaxed),
-    );
-    if compact.len() <= width {
-        return compact;
-    }
-
-    let mut minimal = format!(
-        "{rate:.2} KH/s H:{}",
-        shared.our_height.load(Ordering::Relaxed)
-    );
-    if minimal.len() > width {
-        minimal.truncate(width);
-    }
-    minimal
+    // Narrower than the smallest rung. Render UNCOLOURED and clip: truncating a
+    // coloured line can cut an escape in half, which wedges the terminal's
+    // colour state and prints the escape's tail as literal text. The C miner
+    // keeps colour here with an escape-aware compactor (`console.cpp:270-310`);
+    // dropping colour is three lines instead of thirty and a terminal this
+    // narrow has bigger problems.
+    let mut lb = LineBuf::new();
+    render_minimal(&mut lb, &Palette::PLAIN, &fields);
+    lb.truncate_visible(budget);
+    lb
 }
 
+/// Column budget for the status line.
+///
+/// The `-1` keeps the line off the final column: a line that ends exactly at
+/// the edge leaves the cursor in a pending-wrap state that some emulators
+/// resolve by scrolling.
+///
+/// The default when the width cannot be read is 80, not 40 — "console of
+/// unknown size" is a real case (Git Bash/mintty report a terminal but fail the
+/// size query on a pty handle), and assuming a classic 80 keeps the line on one
+/// row there. Assuming narrow instead just discards fields nobody asked to
+/// lose. `console.cpp:67-73` reasons the same way.
 fn status_width_budget(measured_width: Option<usize>) -> usize {
-    measured_width.unwrap_or(40).saturating_sub(1)
-}
-
-#[cfg(unix)]
-fn terminal_width() -> Option<usize> {
-    // SAFETY: winsize is a plain C output struct and STDERR_FILENO remains valid
-    // for the duration of this call.
-    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    if unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) } == 0
-        && size.ws_col > 0
-    {
-        Some(size.ws_col.into())
-    } else {
-        None
-    }
-}
-
-#[cfg(windows)]
-fn terminal_width() -> Option<usize> {
-    use windows_sys::Win32::System::Console::{
-        GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO, STD_ERROR_HANDLE,
-    };
-
-    let mut info = CONSOLE_SCREEN_BUFFER_INFO::default();
-    // SAFETY: info points to initialized writable storage and the standard
-    // error handle is borrowed only for this query.
-    if unsafe { GetConsoleScreenBufferInfo(GetStdHandle(STD_ERROR_HANDLE), &mut info) } == 0 {
-        return None;
-    }
-    usize::try_from(i32::from(info.srWindow.Right) - i32::from(info.srWindow.Left) + 1).ok()
-}
-
-#[cfg(not(any(unix, windows)))]
-fn terminal_width() -> Option<usize> {
-    None
+    measured_width.unwrap_or(80).saturating_sub(1)
 }
 
 /// Emit a 1 Hz status repaint to a terminal or complete records to a log.
 fn stats_loop(shared: &Shared, testnet: bool) {
+    let con = term::get();
     let started_at = Instant::now();
     let started_hashes = shared.counter.load(Ordering::Relaxed);
     let mut rates = HashrateWindow::new(started_at, started_hashes);
-    let tty = io::stderr().is_terminal();
-    let mut last_len = 0usize;
+    let mut last_width = 0usize;
     loop {
         if shared.exit.load(Ordering::Relaxed) {
             return;
@@ -608,16 +833,49 @@ fn stats_loop(shared: &Shared, testnet: bool) {
         let average = counter
             .checked_sub(started_hashes)
             .map_or(0.0, |hashes| rate_khs(hashes, uptime));
-        if tty {
-            let width = terminal_width();
-            let line = format_terminal_status_line(shared, rate, average, uptime, testnet, width);
-            let pad = last_len
-                .min(status_width_budget(width))
-                .saturating_sub(line.len());
-            eprint!("\r{line}{}", " ".repeat(pad));
-            let _ = io::stderr().flush();
-            last_len = line.len();
+        if con.tty {
+            let width = term::columns();
+            let line = format_terminal_status_line(
+                shared,
+                rate,
+                average,
+                uptime,
+                testnet,
+                width,
+                con.palette,
+            );
+
+            // Build the whole repaint and emit it with ONE locked write. The
+            // line carries no newline, so the cursor rests mid-row between
+            // ticks; a log record from the getwork thread landing in the middle
+            // of a partial write would wrap the row and leave debris that never
+            // gets cleaned up.
+            let mut out = String::with_capacity(line.text.len() + 16);
+            out.push('\r');
+            out.push_str(&line.text);
+            if con.vt {
+                out.push_str("\x1b[K");
+            } else {
+                // No erase-to-EOL available. Overwrite the tail of the previous,
+                // longer line with spaces — counted in COLUMNS, since with
+                // escapes present a byte count would be wildly wrong. Safe to
+                // pad here because no VT also means no colour, so the spaces
+                // cannot inherit a pen.
+                let pad = last_width
+                    .min(status_width_budget(width))
+                    .saturating_sub(line.width);
+                for _ in 0..pad {
+                    out.push(' ');
+                }
+            }
+            last_width = line.width;
+
+            let mut err = io::stderr().lock();
+            let _ = err.write_all(out.as_bytes());
+            let _ = err.flush();
         } else {
+            // Redirected: complete records, no escapes, no carriage returns, so
+            // `2> miner.log` stays greppable.
             eprintln!(
                 "{}",
                 format_status_line(shared, rate, average, uptime, testnet)
@@ -657,7 +915,7 @@ fn command_loop(shared: &Shared) {
             }
             Ok(_) => {}
             Err(e) => {
-                eprintln!("stdin error: {e}");
+                crate::error!("stdin error: {e}");
                 return;
             }
         }
@@ -681,6 +939,10 @@ fn command_loop(shared: &Shared) {
             }
             _ if lower == "bye" || lower == "exit" || lower == "quit" => {
                 shared.exit.store(true, Ordering::SeqCst);
+                // The status line is redrawn in place and carries no newline,
+                // so without this the shell prompt lands mid-row wearing
+                // whatever colour was last set.
+                term::restore_on_exit();
                 std::process::exit(0);
             }
             _ if line.is_empty() => {}
@@ -784,53 +1046,176 @@ mod tests {
         );
     }
 
-    #[test]
-    fn terminal_status_uses_the_longest_layout_that_fits() {
+    /// A `Shared` carrying the values used across the layout tests.
+    fn sample_shared() -> Shared {
         let shared = Shared::new();
         shared.our_height.store(2_345_678, Ordering::Relaxed);
         shared.mini_block_counter.store(12, Ordering::Relaxed);
         shared.block_counter.store(3, Ordering::Relaxed);
         shared.rejected.store(1, Ordering::Relaxed);
         shared.difficulty.store(312_979_370, Ordering::Relaxed);
-        let args = (1.234, 0.987, Duration::from_secs(3_723), false);
+        shared
+    }
 
-        let full = format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(200));
+    #[test]
+    fn terminal_status_uses_the_longest_layout_that_fits() {
+        let shared = sample_shared();
+        let args = (1.234, 0.987, Duration::from_secs(3_723), false);
+        let plain = &Palette::PLAIN;
+        let line = |w: Option<usize>| {
+            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, w, plain)
+        };
+
+        // Widest rung is byte-identical to the standalone formatter.
         assert_eq!(
-            full,
+            line(Some(200)).text,
             format_status_line(&shared, args.0, args.1, args.2, args.3)
         );
 
-        let compact =
-            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(56));
-        assert_eq!(compact, "[DIRTYBIRD] 1.23 KH/s H:2345678 M:12 B:3 R:1");
-        assert!(compact.len() <= 56);
+        // Phone-sized: short tag, uptime kept, difficulty dropped.
+        let compact = line(Some(56));
         assert_eq!(
-            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(80)),
-            compact
+            compact.text,
+            "[DB] 1.23 KH/s | H:2345678 MB:12 B:3 R:1 | 01:02:03"
         );
+        assert!(compact.width <= 55);
 
-        let minimal =
-            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(40));
-        assert_eq!(minimal, "1.23 KH/s H:2345678");
-        assert_eq!(
-            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, None),
-            minimal
+        // 80 columns keeps every field via the abbreviated rungs rather than
+        // cliffing to the phone layout.
+        let eighty = line(Some(80));
+        assert!(
+            eighty.text.contains("D:312M"),
+            "80 cols keeps difficulty: {}",
+            eighty.text
         );
+        assert!(eighty.width <= 79);
 
+        // Too narrow for uptime: rate plus the two counters worth watching.
+        assert_eq!(line(Some(40)).text, "[DB] 1.23 KH/s MB:12 B:3");
+
+        // Unknown width assumes a classic 80-column console, not a tiny one.
+        assert_eq!(line(None).text, eighty.text);
+    }
+
+    #[test]
+    fn every_layout_stays_within_the_budget() {
+        let shared = sample_shared();
+        // Values wide enough to push each rung over: a huge height, a huge
+        // miniblock count and a four-digit rate.
         shared.our_height.store(u64::MAX, Ordering::Relaxed);
         shared.mini_block_counter.store(u64::MAX, Ordering::Relaxed);
-        let narrow =
-            format_terminal_status_line(&shared, 123_456_789.12, args.1, args.2, args.3, Some(12));
-        assert_eq!(narrow.len(), 11);
-        assert_eq!(narrow, "123456789.1");
-        assert_eq!(
-            format_terminal_status_line(&shared, 123_456_789.12, args.1, args.2, args.3, None)
-                .len(),
-            39
+
+        for width in 1..=200usize {
+            for palette in [&Palette::PLAIN, &Palette::COLOUR] {
+                let lb = format_terminal_status_line(
+                    &shared,
+                    123_456_789.12,
+                    0.987,
+                    Duration::from_secs(3_723),
+                    false,
+                    Some(width),
+                    palette,
+                );
+                // The anti-wrap invariant: a status line wider than the terminal
+                // wraps, and because the repaint only rewinds one row the debris
+                // stacks down the screen forever.
+                assert!(
+                    lb.width <= status_width_budget(Some(width)),
+                    "width {} overflowed at terminal {}: {:?}",
+                    lb.width,
+                    width,
+                    lb.text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn colour_costs_bytes_but_never_columns() {
+        let shared = sample_shared();
+        let args = (1.234, 0.987, Duration::from_secs(3_723), false);
+        for width in [Some(200), Some(80), Some(56), Some(40), None] {
+            let plain = format_terminal_status_line(
+                &shared,
+                args.0,
+                args.1,
+                args.2,
+                args.3,
+                width,
+                &Palette::PLAIN,
+            );
+            let colour = format_terminal_status_line(
+                &shared,
+                args.0,
+                args.1,
+                args.2,
+                args.3,
+                width,
+                &Palette::COLOUR,
+            );
+            // Same layout chosen, same columns occupied...
+            assert_eq!(plain.width, colour.width);
+            assert_eq!(plain.text.len(), plain.width, "plain must carry no escapes");
+            assert!(!plain.text.contains('\u{1b}'));
+            // ...but the coloured one is longer in bytes and resets its pen.
+            assert!(colour.text.len() > colour.width);
+            assert!(colour.text.ends_with("\u{1b}[0m"));
+        }
+    }
+
+    #[test]
+    fn compact_layout_matches_the_reference_miner_on_a_phone() {
+        // Pins the exact line from a 54-column Termux session, field for field
+        // against the C miner's TIER_COMPACT.
+        let shared = Shared::new();
+        shared.our_height.store(7_386_579, Ordering::Relaxed);
+        let lb = format_terminal_status_line(
+            &shared,
+            5.04,
+            4.9,
+            Duration::from_secs(77),
+            false,
+            Some(54),
+            &Palette::PLAIN,
         );
-        assert!(
-            format_terminal_status_line(&shared, args.0, args.1, args.2, args.3, Some(0))
-                .is_empty()
+        assert_eq!(
+            lb.text,
+            "[DB] 5.04 KH/s | H:7386579 MB:0 B:0 R:0 | 00:01:17"
+        );
+        assert_eq!(lb.width, 50);
+
+        // The same line coloured, pinned byte for byte against the reference
+        // miner's per-field palette so a refactor cannot quietly recolour it.
+        let colour = format_terminal_status_line(
+            &shared,
+            5.04,
+            4.9,
+            Duration::from_secs(77),
+            false,
+            Some(54),
+            &Palette::COLOUR,
+        );
+        assert_eq!(
+            colour.text,
+            "\u{1b}[93m[DB] \u{1b}[92m5.04 KH/s\u{1b}[97m | \u{1b}[34mH:7386579\u{1b}[97m \
+             \u{1b}[36mMB:0\u{1b}[97m \u{1b}[32mB:0\u{1b}[97m \u{1b}[37mR:0\u{1b}[97m | \
+             \u{1b}[37m00:01:17\u{1b}[0m"
+        );
+        assert_eq!(colour.width, 50, "escapes must not consume columns");
+    }
+
+    #[test]
+    fn wallet_elision_keeps_head_and_tail() {
+        assert_eq!(
+            elide_wallet("dero1qyqztaxp2cqdhtve0k0v4dv0cmkpvhs8xukkwhgr5eep9u8urxzqqqgshhnwk"),
+            "dero1qyq...hnwk"
+        );
+        // Too short to gain anything: passed through.
+        assert_eq!(elide_wallet("dero1qyq"), "dero1qyq");
+        // Non-ASCII would panic a naive byte slice at index 8.
+        assert_eq!(
+            elide_wallet("dero1qyq\u{00e9}zzzzzzzzzzzz"),
+            "dero1qyq\u{00e9}zzzzzzzzzzzz"
         );
     }
 
