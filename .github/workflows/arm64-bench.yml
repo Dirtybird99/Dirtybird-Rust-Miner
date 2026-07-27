@@ -20,11 +20,20 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "smoke = runner facts only (no build)"
-        default: smoke
+        description: "what to run"
+        default: bench
         type: choice
         options:
-          - smoke
+          - smoke        # runner facts only, no build
+          - bench        # gate + both SA arms (fused and materialized)
+          - profile      # per-stage share of the hash
+          - noise        # same measurement 10x in one job
+      threads:
+        description: "worker threads (blank = nproc)"
+        default: ""
+      iters:
+        description: "hashes per thread per repeat (fixed work)"
+        default: "1000"
       repeats:
         description: "bench repeats (first discarded as warmup)"
         default: "7"
@@ -86,9 +95,172 @@ jobs:
           echo "=== toolchain ==="
           rustc -vV || echo "no rustc preinstalled"
 
-      - name: Mode
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        if: inputs.mode != 'smoke'
+        with:
+          # Same pin as ci.yml, so a measurement cannot drift because the
+          # runner image shipped a different compiler than the release build.
+          toolchain: 1.97.0
+
+      - name: Load build knobs
+        if: inputs.mode != 'smoke'
         run: |
           set -euo pipefail
-          echo "mode=${{ inputs.mode }} repeats=${{ inputs.repeats }}"
+          # bench/arm64-build.env is the ONE file the optimization loop may edit
+          # to change how the artifact is built. Keeping the knobs there rather
+          # than in this workflow is what lets build-flag candidates (LTO,
+          # target-cpu) be tested without editing the measuring instrument.
+          # shellcheck source=/dev/null
+          . bench/arm64-build.env
+          echo "CARGO_PROFILE=${CARGO_PROFILE}" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=${BENCH_RUSTFLAGS}"   >> "$GITHUB_ENV"
+          echo "profile=${CARGO_PROFILE} rustflags=[${BENCH_RUSTFLAGS}]"
+
+      - name: Guard - profiling still compiles here
+        if: inputs.mode != 'smoke'
+        run: |
+          set -euo pipefail
+          # astrobwtv3_stage_cycles used core::arch::x86_64::_rdtsc with no
+          # target_arch gate, so `--features profiling` did not compile on
+          # aarch64 at all. This keeps that from rotting back.
+          cargo check --locked -p dero-astrobwt --features "v114 profiling" --examples
+
+      - name: Build
+        if: inputs.mode != 'smoke'
+        run: |
+          set -euo pipefail
+          # ONE build serves the gate and the metric. If they were built
+          # separately the gate would not be gating the measured artifact --
+          # precisely where a bad build flag would hide.
+          cargo build --locked --profile "$CARGO_PROFILE" -p dero-astrobwt \
+            --features "v114 shani2" --example arm_bench --example kat
+          BENCH="$(cargo build --locked --profile "$CARGO_PROFILE" -p dero-astrobwt \
+            --features "v114 shani2" --example arm_bench --message-format=json 2>/dev/null |
+            jq -r 'select(.executable and .target.name == "arm_bench") | .executable' | tail -n1)"
+          KAT="$(cargo build --locked --profile "$CARGO_PROFILE" -p dero-astrobwt \
+            --features "v114 shani2" --example kat --message-format=json 2>/dev/null |
+            jq -r 'select(.executable and .target.name == "kat") | .executable' | tail -n1)"
+          test -x "$BENCH" && test -x "$KAT"
+          echo "BENCH=$BENCH" >> "$GITHUB_ENV"
+          echo "KAT=$KAT" >> "$GITHUB_ENV"
+
+      - name: Gate - byte-exactness
+        if: inputs.mode == 'bench' || inputs.mode == 'noise'
+        env:
+          # Turns "this machine has no ARMv8 crypto" into a hard failure rather
+          # than a silent 3x-slower software-SHA run that still looks green.
+          DERO_REQUIRE_AARCH64_SHA2: "1"
+        run: |
+          set -euo pipefail
+          # libtest EXITS 0 WHEN A FILTER MATCHES NOTHING, so assert a nonzero
+          # pass count rather than trusting exit status (ci.yml learned this the
+          # hard way: "0 passed; 13 filtered out", job green, nothing verified).
+          run_tests() {
+            local label="$1"; shift
+            local out re='test result: ok\. [1-9][0-9]* passed'
+            if ! out="$("$@" 2>&1)"; then
+              printf '%s\n' "$out"; echo "::error::$label failed"; return 1
+            fi
+            printf '%s\n' "$out"
+            if [[ ! "$out" =~ $re ]]; then
+              echo "::error::$label selected no tests -- this gate is running nothing"; return 1
+            fi
+          }
+
+          run_tests "hwcap assertion" cargo test --locked --profile "$CARGO_PROFILE" \
+            -p dero-astrobwt --features "v114 shani2" --test aarch64_hw_sha256 -- --nocapture
+
+          kat_out="$("$KAT")"
+          printf '%s\n' "$kat_out"
+          [[ "$kat_out" == *"ALL CORRECTNESS CHECKS PASS"* ]]
+
+          # Asserts pow + fused + SA digests per case, so BOTH suffix-array
+          # paths stay covered even though only one of them is measured.
+          run_tests "v114 golden fixture" cargo test --locked --profile "$CARGO_PROFILE" \
+            -p dero-astrobwt --features "v114 shani2" --lib \
+            v114_golden_tests::v114_matches_golden_fixture -- --exact --nocapture
+
+          echo "GATE=pass" >> "$GITHUB_ENV"
+          echo "::notice::GATE=pass"
+
+      - name: Measure - both SA arms
+        if: inputs.mode == 'bench'
+        run: |
+          set -euo pipefail
+          ARGS=(--iters "${{ inputs.iters }}" --repeats "${{ inputs.repeats }}")
+          if [ -n "${{ inputs.threads }}" ]; then ARGS+=(--threads "${{ inputs.threads }}"); fi
+
+          # POLARITY TRAP: the library tests this var with is_none(), so
+          # DERO_MATERIALIZE=0 selects MATERIALIZED. Fused can only be asked for
+          # by unsetting it. It is also read once into a OnceLock, hence one
+          # process per configuration rather than one process measuring both.
+          echo "--- fused (DERO_MATERIALIZE unset) ---"
+          FUSED="$(env -u DERO_MATERIALIZE "$BENCH" "${ARGS[@]}" | tail -n1)"
+          echo "--- materialized (DERO_MATERIALIZE=1) ---"
+          MAT="$(DERO_MATERIALIZE=1 "$BENCH" "${ARGS[@]}" | tail -n1)"
+
+          jq -n --arg c "$GITHUB_SHA" --arg g "${GATE:-unknown}" \
+                --argjson f "$FUSED" --argjson m "$MAT" \
+                '{commit:$c, gate:$g, fused:$f, materialized:$m}' > bench-result.json
+          cat bench-result.json
+          {
+            echo "### arm64 bench"
+            echo ""
+            echo "| arm | ns/hash (median) | spread % | H/s |"
+            echo "|---|---|---|---|"
+            jq -r '.fused        | "| fused | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
+            jq -r '.materialized | "| materialized | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::NS_PER_HASH_FUSED=$(jq -r .fused.ns_per_hash_median bench-result.json)"
+          echo "::notice::NS_PER_HASH_MATERIALIZED=$(jq -r .materialized.ns_per_hash_median bench-result.json)"
+
+      - name: Measure - within-job noise
+        if: inputs.mode == 'noise'
+        run: |
+          set -euo pipefail
+          # Ten independent measurements back to back. This is the WITHIN-job
+          # spread; the between-job spread (what actually matters, since every
+          # loop iteration is a fresh VM) comes from dispatching this 3 times
+          # and comparing the medians.
+          ARGS=(--iters "${{ inputs.iters }}" --repeats "${{ inputs.repeats }}")
+          if [ -n "${{ inputs.threads }}" ]; then ARGS+=(--threads "${{ inputs.threads }}"); fi
+          for i in $(seq 1 10); do
+            m="$(env -u DERO_MATERIALIZE "$BENCH" "${ARGS[@]}" | tail -n1 | jq -r .ns_per_hash_median)"
+            echo "run $i: $m"
+            echo "$m"
+          done | grep -E '^[0-9.]+$' | jq -sR 'split("\n")|map(select(length>0)|tonumber)|
+            (add/length) as $mean |
+            {n:length, mean:$mean, min:min, max:max,
+             cv_pct: (((map(. - $mean | . * .)|add)/length|sqrt)/$mean*100)}' | tee noise.json
+          echo "::notice::WITHIN_JOB_CV_PCT=$(jq -r .cv_pct noise.json)"
+
+      - name: Profile - per-stage share
+        if: inputs.mode == 'profile'
+        run: |
+          set -euo pipefail
+          # The whole point of fixing the aarch64 profiler: which stage actually
+          # dominates a hash on ARM now that v0.2.8 put the crypto extensions to
+          # work? This ranks every remaining optimization candidate.
+          # NOTE: astrobwtv3_stage_cycles always materializes the SA, so this is
+          # the materialized path's profile.
+          cargo run --locked --profile "$CARGO_PROFILE" -p dero-astrobwt \
+            --features "v114 profiling" --example profile | tee profile.txt
+          { echo '### aarch64 per-stage profile'; echo '```'; cat profile.txt; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: inputs.mode != 'smoke'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: arm64-bench-${{ inputs.mode }}
+          path: |
+            bench-result.json
+            noise.json
+            profile.txt
+          if-no-files-found: ignore
+
+      - name: Smoke note
+        if: inputs.mode == 'smoke'
+        run: |
           echo "smoke mode: no build, no benchmark -- this run only answers"
           echo "'does ubuntu-24.04-arm resolve and what silicon is it?'"
