@@ -121,6 +121,14 @@ Note the arm64 artifact split: `arm64` = static-musl for generic arm64 Linux (SB
 VMs) and **will not run on Android**; `android-arm64` = bionic-native, the only one Termux
 can exec and the only one that can resolve DNS on Android.
 
+v0.2.9 adds a second ARM hashrate change: a two-stream SHA-256 kernel on the ARMv8 crypto
+extensions, measured 8.8% faster on a native Neoverse-N2 runner. Two independent hashes are
+interleaved so the pipeline stays fed — SHA256H is multi-cycle and one stream cannot fill it.
+The instruction count is identical; only the scheduling changes, and the hashes are byte-for-byte
+the same. It does hold two suffix arrays in flight, which trades cache footprint for that
+scheduling, so on a device with small caches it may be the wrong trade: `--no-2way` (or
+`MINER_2WAY=0`) turns it off, and it is worth comparing on your own hardware.
+
 Use v0.2.8 or newer for phone hashrate. v0.2.7 hashed with `sha2`'s software rounds, and
 since every AstroBWTv3 hash SHA-256s ~270 KB of suffix-array output (~4,200 compressions),
 that stage dominated everything else on ARM. v0.2.8 enables the ARMv8 crypto extensions
