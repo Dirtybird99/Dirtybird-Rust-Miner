@@ -38,15 +38,22 @@ fn main() {
         total += c.iter().sum::<u64>();
     }
 
+    // astrobwtv3_stage_cycles reads rdtsc on x86_64 and a nanosecond clock
+    // everywhere else, so the unit label has to follow the target. Printing
+    // "cyc/hash" over nanoseconds would silently invite comparisons against the
+    // x86 figures recorded in BENCHMARKS.md, which are a different quantity.
+    // The percentages are the portable part and are unaffected either way.
+    let unit = if cfg!(target_arch = "x86_64") { "cyc/hash" } else { "ns/hash" };
+
     println!("AstroBWTv3 per-stage profile ({ITERS} hashes)\n");
     let total_f = total as f64;
     let per_hash = total_f / ITERS as f64;
     for k in 0..4 {
         let pct = 100.0 * acc[k] as f64 / total_f;
         let cyc = acc[k] as f64 / ITERS as f64;
-        println!("  {:<30} {:6.2}%   {:>10.0} cyc/hash", names[k], pct, cyc);
+        println!("  {:<30} {:6.2}%   {:>10.0} {unit}", names[k], pct, cyc);
     }
-    println!("\n  {:<30} {:>17.0} cyc/hash", "TOTAL", per_hash);
+    println!("\n  {:<30} {:>17.0} {unit}", "TOTAL", per_hash);
 }
 
 #[cfg(not(feature = "profiling"))]

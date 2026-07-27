@@ -636,26 +636,58 @@ pub fn dump_v114_case(input: &[u8]) -> (Vec<u8>, Vec<u8>, usize) {
 }
 
 /// Measurement-only twin of [`astrobwtv3_with_scratch`] that returns per-stage
-/// rdtsc cycle counts: `[prologue, op_loop, suffix_array, final_sha256]`. The
-/// active suffix-array backend (pure-Rust / libsais / v114) is profiled exactly
-/// as the production path selects it. Behind `feature = "profiling"` so the real
-/// hot path carries zero instrumentation overhead.
+/// timings: `[prologue, op_loop, suffix_array, final_sha256]` — rdtsc cycles on
+/// x86_64, nanoseconds on every other target (see `tick`). Only ratios between
+/// the four are meaningful, which is why a change of unit is harmless;
+/// `examples/profile.rs` prints the right label for the target it was built for.
+/// The active suffix-array backend (pure-Rust / libsais / v114) is profiled
+/// exactly as the production path selects it. Behind `feature = "profiling"` so
+/// the real hot path carries zero instrumentation overhead.
 #[cfg(feature = "profiling")]
 pub fn astrobwtv3_stage_cycles(input: &[u8], scratch: &mut AstroBwtScratch) -> [u64; 4] {
+    // x86_64 keeps the exact rdtsc it always used, so old profiles stay
+    // comparable. Everything else needed SOME clock, because this function used
+    // to name `core::arch::x86_64::_rdtsc` unconditionally: off x86 that path
+    // does not exist, so `--features profiling` did not merely misreport, it
+    // FAILED TO COMPILE. The one tool that says which stage dominates was
+    // therefore unavailable on aarch64 — the platform currently most in need of
+    // it, and the reason nobody knows SHA-256's remaining share after the ARMv8
+    // crypto backend landed in v0.2.8.
+    //
+    // `Instant` rather than a raw `cntvct_el0` read, for three reasons: the
+    // profiler reports percentages, so any monotonic unit serves; stages run
+    // hundreds of microseconds against a ~25 ns clock read, which on Linux
+    // aarch64 is a vDSO `cntvct_el0` with no syscall; and Qualcomm's counter
+    // ticks at 19.2 MHz (~52 ns granularity), so reading it directly would be
+    // COARSER than the clock it replaced while also requiring `unsafe` and an
+    // assumption that EL0 counter access is enabled.
+    #[cfg(target_arch = "x86_64")]
     #[inline(always)]
-    fn rdtsc() -> u64 {
+    fn tick() -> u64 {
         // SAFETY: x86_64 only; _rdtsc is always available on this target.
         unsafe { core::arch::x86_64::_rdtsc() }
     }
 
-    let t0 = rdtsc();
+    #[cfg(not(target_arch = "x86_64"))]
+    #[inline(always)]
+    fn tick() -> u64 {
+        use std::sync::OnceLock;
+        use std::time::Instant;
+        // A fixed epoch keeps the return value a small integer rather than a
+        // wall-clock nanosecond count, so the subtractions below cannot lose
+        // precision to f64 rounding in the caller.
+        static EPOCH: OnceLock<Instant> = OnceLock::new();
+        EPOCH.get_or_init(Instant::now).elapsed().as_nanos() as u64
+    }
+
+    let t0 = tick();
     let sha_key: [u8; 32] = Sha256::digest(input).into();
     let mut step_3 = salsa20_keystream_256(&sha_key);
     let mut rc4 = rc4::Rc4::new(&step_3);
     rc4.xor_key_stream(&mut step_3);
     let mut lhash = fnv1a_64(&step_3);
     let mut prev_lhash = lhash;
-    let t1 = rdtsc();
+    let t1 = tick();
 
     let mut tries: u64 = 0;
     scratch.data.clear();
@@ -755,7 +787,7 @@ pub fn astrobwtv3_stage_cycles(input: &[u8], scratch: &mut AstroBwtScratch) -> [
         }
         scratch.data[data_len..tail_end].fill(0);
     }
-    let t2 = rdtsc();
+    let t2 = tick();
 
     // --- suffix array (active backend) ---
     // Three mutually-exclusive arms: v114 (descriptor, pure-Rust fallback),
@@ -775,30 +807,30 @@ pub fn astrobwtv3_stage_cycles(input: &[u8], scratch: &mut AstroBwtScratch) -> [
         } else {
             Some(sais32::suffix_array(&scratch.data[..data_len]))
         };
-        let t3 = rdtsc();
+        let t3 = tick();
         let _ = match &fallback {
             Some(sa) => sha256_sa_i32_le(sa),
             None => sha256_sa_i32_le(&scratch.sa[..]),
         };
-        let t4 = rdtsc();
+        let t4 = tick();
         return [t1 - t0, t2 - t1, t3 - t2, t4 - t3];
     }
     #[cfg(all(feature = "libsais", not(feature = "v114")))]
     {
         let data = &scratch.data[..data_len];
         let sa = sais32::suffix_array_libsais_into(data, &mut scratch.sa, &scratch.libsais_ctx);
-        let t3 = rdtsc();
+        let t3 = tick();
         let _ = sha256_sa_i32_le(sa);
-        let t4 = rdtsc();
+        let t4 = tick();
         return [t1 - t0, t2 - t1, t3 - t2, t4 - t3];
     }
     #[cfg(all(not(feature = "libsais"), not(feature = "v114")))]
     {
         let data = &scratch.data[..data_len];
         let sa = sais32::suffix_array(data);
-        let t3 = rdtsc();
+        let t3 = tick();
         let _ = sha256_sa_i32_le(&sa);
-        let t4 = rdtsc();
+        let t4 = tick();
         [t1 - t0, t2 - t1, t3 - t2, t4 - t3]
     }
 }
