@@ -120,18 +120,38 @@ fn pin_worker(tid: u8) {
     }
 }
 
-/// Whether the 2-way SHA-NI pipeline is on by default: only on x86_64 with
-/// SHA-NI (where the interleaved-asm SHA actually wins). Elsewhere the x2 path
-/// would be two sequential `sha2` calls with a doubled working set — pure loss —
-/// so it defaults off. `target_arch`-gated so `is_x86_feature_detected!` (an
-/// x86-only macro) never breaks non-x86 builds of the pure-Rust `v114` feature.
+/// Whether the 2-way SHA pipeline is on by default: wherever a hardware SHA-256
+/// kernel actually interleaves two streams. Without one the x2 path degenerates
+/// to two sequential `sha2` calls with a doubled working set — pure loss — so
+/// anything else defaults off. Each arm is `target_arch`-gated because the
+/// detection macros are themselves arch-specific.
+///
+/// x86_64: SHA-NI, the original interleaved-asm path.
+///
+/// aarch64: the ARMv8 crypto extensions (`astrobwt/src/sha256_x2.rs`). Measured
+/// on a native Neoverse-N2 runner, 4 threads, fixed work, 7 repeats:
+/// 180_483 ns/hash one-way vs 164_569 two-way, i.e. **8.8% faster** against a
+/// between-job noise floor of 0.23%. That is consistent with the per-stage
+/// profile, where the final SHA-256 is 21% of a hash: interleaving takes ~42%
+/// off that stage, which is what a latency-bound hash gives up when a second
+/// independent stream fills the pipe.
+///
+/// CAVEAT, and it is the reason this is worth re-checking on a phone: the x2
+/// path materializes TWO suffix arrays, so it trades cache footprint for
+/// scheduling. The N2 runner has 1 MiB of L2 per core and 128 MiB of L3, where
+/// a doubled working set costs nothing; a phone has far less, and could reach a
+/// different verdict. `MINER_2WAY=0` (or `--no-2way`) turns it off.
 #[cfg(feature = "shani2")]
 fn two_way_default() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         std::is_x86_feature_detected!("sha")
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        std::arch::is_aarch64_feature_detected!("sha2")
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         false
     }
