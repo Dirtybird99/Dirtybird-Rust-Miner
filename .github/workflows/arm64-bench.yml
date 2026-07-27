@@ -180,6 +180,20 @@ jobs:
             -p dero-astrobwt --features "v114 shani2" --lib \
             v114_golden_tests::v114_matches_golden_fixture -- --exact --nocapture
 
+          # The three gates above all run ONE-way paths, so none of them would
+          # notice a wrong two-way SHA kernel -- sha256_x2 is simply never
+          # called. These two are the only thing standing between a bad
+          # interleaved kernel and a "faster" number: the first compares the
+          # kernel against sha2 over 2000 varied lengths including block
+          # boundaries, the second asserts the two-way pipeline equals two
+          # one-way hashes end to end.
+          run_tests "2-way SHA kernel vs sha2" cargo test --locked --profile "$CARGO_PROFILE" \
+            -p dero-astrobwt --features "v114 shani2" --lib \
+            sha256_x2::tests::sha256_x2_matches_sha2_for_varied_lengths -- --exact --nocapture
+          run_tests "2-way pipeline equality" cargo test --locked --profile "$CARGO_PROFILE" \
+            -p dero-astrobwt --features "v114 shani2" --lib \
+            tests::astrobwtv3_x2_matches_two_materialized_hashes -- --exact --nocapture
+
           echo "GATE=pass" >> "$GITHUB_ENV"
           echo "::notice::GATE=pass"
 
@@ -198,18 +212,29 @@ jobs:
           FUSED="$(env -u DERO_MATERIALIZE "$BENCH" "${ARGS[@]}" | tail -n1)"
           echo "--- materialized (DERO_MATERIALIZE=1) ---"
           MAT="$(DERO_MATERIALIZE=1 "$BENCH" "${ARGS[@]}" | tail -n1)"
+          # Third arm: the same materialized configuration hashing two nonces per
+          # call. This is a peer configuration of the frozen one, not a foreign
+          # experiment -- astrobwtv3_x2 materializes too -- so measuring it here
+          # is the same shape as the fused/materialized pair and leaves the
+          # `materialized` key (the frozen metric) untouched and comparable.
+          echo "--- materialized, 2-way (--mode 2way) ---"
+          MAT2="$(DERO_MATERIALIZE=1 "$BENCH" "${ARGS[@]}" --mode 2way | tail -n1)"
 
           jq -n --arg c "$GITHUB_SHA" --arg g "${GATE:-unknown}" \
-                --argjson f "$FUSED" --argjson m "$MAT" \
-                '{commit:$c, gate:$g, fused:$f, materialized:$m}' > bench-result.json
+                --argjson f "$FUSED" --argjson m "$MAT" --argjson m2 "$MAT2" \
+                '{commit:$c, gate:$g, fused:$f, materialized:$m, materialized_2way:$m2}' \
+                > bench-result.json
           cat bench-result.json
           {
             echo "### arm64 bench"
             echo ""
             echo "| arm | ns/hash (median) | spread % | H/s |"
             echo "|---|---|---|---|"
-            jq -r '.fused        | "| fused | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
-            jq -r '.materialized | "| materialized | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
+            jq -r '.fused             | "| fused | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
+            jq -r '.materialized      | "| materialized (frozen metric) | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
+            jq -r '.materialized_2way | "| materialized 2-way | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
+            echo ""
+            jq -r '"2-way vs 1-way: \((.materialized_2way.ns_per_hash_median / .materialized.ns_per_hash_median * 10000 | round) / 100)x"' bench-result.json
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::NS_PER_HASH_FUSED=$(jq -r .fused.ns_per_hash_median bench-result.json)"
           echo "::notice::NS_PER_HASH_MATERIALIZED=$(jq -r .materialized.ns_per_hash_median bench-result.json)"
