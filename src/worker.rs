@@ -57,6 +57,11 @@ pub struct Shared {
     pub our_height: AtomicU64,
     /// Set on exit/quit/bye (Go `Exit_In_Progress` channel close).
     pub exit: AtomicBool,
+    /// True only between a completed WebSocket upgrade and the next redial.
+    /// Read by the status line, which stays silent while it is false: workers
+    /// cannot hash without a connection, so the rate there is a real zero and
+    /// printing it says nothing the logs have not already said.
+    pub connected: AtomicBool,
 }
 
 impl Shared {
@@ -71,6 +76,7 @@ impl Shared {
             difficulty: AtomicU64::new(0),
             our_height: AtomicU64::new(0),
             exit: AtomicBool::new(false),
+            connected: AtomicBool::new(false),
         }
     }
 }

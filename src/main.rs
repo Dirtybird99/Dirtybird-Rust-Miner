@@ -368,6 +368,11 @@ fn getwork(
     let path = format!("/ws/{wallet_address}");
 
     'reconnect: loop {
+        // Cleared here rather than at each `continue 'reconnect` (there are
+        // four, and a fifth would be easy to add without noticing): every path
+        // back to the top of this loop is a disconnect, so one store covers
+        // them all.
+        shared.connected.store(false, Ordering::Relaxed);
         if shared.exit.load(Ordering::Relaxed) {
             return;
         }
@@ -408,6 +413,7 @@ fn getwork(
             "Connected ({daemon_rpc_address}) ({} ms)",
             connect_start.elapsed().as_millis()
         );
+        shared.connected.store(true, Ordering::Relaxed);
 
         // drop shares queued while disconnected — their jobs are stale anyway
         // (Go simply loses them when connection.WriteJSON panics/errors)
@@ -811,6 +817,29 @@ fn status_width_budget(measured_width: Option<usize>) -> usize {
 }
 
 /// Emit a 1 Hz status repaint to a terminal or complete records to a log.
+/// Whether the live status row has anything true to report this tick.
+///
+/// A displayed 0.00 KH/s is not a rare fault — it is what every launch prints.
+/// getwork sends no job at connect time (the first arrives on a dispatch tick
+/// ~500ms later), so dial + TLS + upgrade + first job is ~1-3s of genuine zero
+/// and the first tick at t=1s lands inside it. Reconnect is the same story: the
+/// retry sleep here is a flat 10s (miner.go:417), so a flapping link spends
+/// most of its time in this state.
+///
+/// No DERO miner in the ecosystem displays a live zero. tnn-miner suppresses
+/// its row two ways (`if (!isConnected) return 1;`, plus a first-hashrate gate
+/// commented "Mining hasn't started yet - don't print status, just accumulate
+/// stats"); 8lecramm's C miner calls print_status only from inside the worker
+/// thread, after the job check; netrunner's GUI shows a grey "---" placeholder
+/// and a separate "Offline" label.
+///
+/// Suppressing beats printing a reason because the transitions are already
+/// logged, and a log record rewinds and erases the row before writing — so no
+/// stale row is left behind.
+fn status_row_has_something_to_say(connected: bool, job_counter: u64) -> bool {
+    connected && job_counter > 0
+}
+
 fn stats_loop(shared: &Shared, testnet: bool) {
     let con = term::get();
     let started_at = Instant::now();
@@ -834,6 +863,22 @@ fn stats_loop(shared: &Shared, testnet: bool) {
             .checked_sub(started_hashes)
             .map_or(0.0, |hashes| rate_khs(hashes, uptime));
         if con.tty {
+            // Sampling above runs on every tick, printed or not: skipping it
+            // would let the sliding window go stale and the rate would read
+            // wrong for ~10s after mining resumes.
+            //
+            // Only the interactive row is suppressed; the redirected branch
+            // below keeps emitting one record per tick, because that stream is
+            // machine-parsed and a run of 0.00 during an outage is the correct
+            // report there while a gap is not.
+            if !status_row_has_something_to_say(
+                shared.connected.load(Ordering::Relaxed),
+                shared.job_counter.load(Ordering::Relaxed),
+            ) {
+                // Nothing painted, so nothing to overwrite next time.
+                last_width = 0;
+                continue;
+            }
             let width = term::columns();
             let line = format_terminal_status_line(
                 shared,
@@ -954,6 +999,22 @@ fn command_loop(shared: &Shared) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_row_stays_silent_until_there_is_something_to_say() {
+        // Every launch: not connected, no job. This is the tick that used to
+        // print "[DIRTYBIRD] 0.00 KH/s (0.00 KH/s avg) | Height:0 | ..."
+        assert!(!status_row_has_something_to_say(false, 0));
+        // Connected, but getwork has not pushed a job yet — workers are still
+        // parked, so the rate is genuinely zero.
+        assert!(!status_row_has_something_to_say(true, 0));
+        // Mining.
+        assert!(status_row_has_something_to_say(true, 1));
+        // Dropped mid-run: a job was seen earlier so job_counter stays high,
+        // but nothing can hash until the redial succeeds. Having once had a job
+        // must not keep the row alive.
+        assert!(!status_row_has_something_to_say(false, 5));
+    }
 
     #[test]
     fn short_benchmark_flags_parse() {
