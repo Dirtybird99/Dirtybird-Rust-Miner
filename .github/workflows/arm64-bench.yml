@@ -25,7 +25,7 @@ on:
         type: choice
         options:
           - smoke        # runner facts only, no build
-          - bench        # gate + both SA arms (fused and materialized)
+          - bench        # gate + the three SA arms (fused, materialized, 2-way)
           - profile      # per-stage share of the hash
           - noise        # same measurement 10x in one job
       threads:
@@ -197,7 +197,7 @@ jobs:
           echo "GATE=pass" >> "$GITHUB_ENV"
           echo "::notice::GATE=pass"
 
-      - name: Measure - both SA arms
+      - name: Measure - SA arms
         if: inputs.mode == 'bench'
         run: |
           set -euo pipefail
@@ -234,7 +234,7 @@ jobs:
             jq -r '.materialized      | "| materialized (frozen metric) | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
             jq -r '.materialized_2way | "| materialized 2-way | \(.ns_per_hash_median) | \(.spread_pct) | \(1e9/.ns_per_hash_median|floor) |"' bench-result.json
             echo ""
-            jq -r '"2-way vs 1-way: \((.materialized_2way.ns_per_hash_median / .materialized.ns_per_hash_median * 10000 | round) / 100)x"' bench-result.json
+            jq -r '"2-way vs 1-way: \((.materialized_2way.ns_per_hash_median / .materialized.ns_per_hash_median * 100 | round) / 100)x"' bench-result.json
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::NS_PER_HASH_FUSED=$(jq -r .fused.ns_per_hash_median bench-result.json)"
           echo "::notice::NS_PER_HASH_MATERIALIZED=$(jq -r .materialized.ns_per_hash_median bench-result.json)"
