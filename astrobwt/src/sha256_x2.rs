@@ -1,9 +1,12 @@
-//! Experimental two-stream SHA-256 using x86_64 SHA-NI.
+//! Two-stream SHA-256 on the hardware hash extensions: x86_64 SHA-NI and the
+//! ARMv8 crypto extensions.
 
 use sha2::{Digest, Sha256};
 
-/// Hash two independent byte strings, interleaving their SHA-NI rounds when
-/// available and otherwise using the portable `sha2` implementation.
+/// Hash two independent byte strings, interleaving their compression rounds on
+/// the hardware SHA-256 extensions when available (SHA-NI on x86_64, the ARMv8
+/// crypto extensions on aarch64) and otherwise using the portable `sha2`
+/// implementation.
 pub fn sha256_x2(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
     #[cfg(target_arch = "x86_64")]
     if std::is_x86_feature_detected!("sha") {
