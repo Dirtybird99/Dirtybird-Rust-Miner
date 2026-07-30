@@ -118,7 +118,7 @@ jobs:
           # test/example binaries and invoke them under qemu directly; ask cargo
           # for their paths rather than guessing the -<metadata-hash> suffixes.
           json="$(cargo zigbuild --locked --release -p dero-astrobwt \
-            --features v114 --target aarch64-unknown-linux-musl \
+            --features "v114 shani2" --target aarch64-unknown-linux-musl \
             --tests --example kat --message-format=json)"
           pick() { printf '%s' "$json" | jq -r "select(.executable and $1) | .executable" | tail -n1; }
           HW="$(pick '.target.name == "aarch64_hw_sha256"')"
@@ -164,6 +164,17 @@ jobs:
           #    far too slow under emulation.
           run_tests "v114 golden fixture" qemu-aarch64-static "$LIB" \
             v114_golden_tests::v114_matches_golden_fixture --exact
+
+          # 4. The 2-way SHA kernel agrees with the one-way path. The miner
+          #    defaults to it on aarch64 hardware whenever the sha2 hwcap is
+          #    present, and these are the same invocations arm64-bench runs on
+          #    real silicon -- but that workflow is manual-dispatch only, so
+          #    this step is the kernel's only always-on EXECUTION (the arm64
+          #    build jobs merely compile it).
+          run_tests "2-way SHA kernel vs sha2" qemu-aarch64-static "$LIB" \
+            sha256_x2::tests::sha256_x2_matches_sha2_for_varied_lengths --exact
+          run_tests "2-way pipeline equality" qemu-aarch64-static "$LIB" \
+            tests::astrobwtv3_x2_matches_two_materialized_hashes --exact
 
   # Dry-run of the release workflow's android-arm64 build: same toolchain pin,
   # same NDK resolution, same ELF asserts. There is deliberately NO execution
