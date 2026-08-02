@@ -26,7 +26,8 @@ v114-cpp = ["v114", "libsais"]
 # Opt-in: per-stage rdtsc instrumentation (measurement only). Adds a separate
 # profiled pipeline; the production hot path is untouched.
 profiling = []
-# Experimental two-stream SHA-256 using x86_64 SHA-NI.
+# Two-stream SHA-256 on the hardware hash extensions (x86_64 SHA-NI, ARMv8
+# crypto). The default mining path on both architectures when detected.
 shani2 = []
 # Opt-in AVX2 acceleration for the step-5 byte op loop. Runtime use additionally
 # requires the AVX2OPS environment variable and AVX2 CPU support.
