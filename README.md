@@ -2,8 +2,8 @@
 
 A Rust CPU miner for **DERO**'s AstroBWTv3 proof-of-work — a port of the Go reference
 `cmd/dero-miner`. The hot **v114 descriptor suffix-array** stage (~74–88% of every hash) is
-**pure Rust** (`astrobwt/src/v114.rs`, `#![forbid(unsafe_code)]`), ported from the C++ that
-used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
+**pure Rust** (`astrobwt/src/v114.rs`, with narrowly audited unsafe loads/copies), ported
+from the C++ that used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
 
 > **The pure-Rust line.** The whole AstroBWTv3 hash path *and* the pool TLS are Rust — on
 > x86/Windows the shipped binary needs no C toolchain to build and links no C/assembly
@@ -16,6 +16,16 @@ used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
 
 ## Highlights
 
+### v0.2.11
+
+v0.2.11 speeds up the pure-Rust materialized `v114` path while keeping 2-way SHA-NI
+enabled. On the deterministic 2,500-pair production-x2 corpus, alternating runs cut mean
+time by 20.1% and p95 by 19.4% versus v0.2.10 with the same checksum. Short 1-thread and
+20-thread sustained regression gates improved about 5% on the same host. Stable sorting is
+retained because it also beat the otherwise identical unstable-sort control. The normal
+stable `release` build remains the fastest measured configuration; the x86 hash path links
+no C/C++ backend.
+
 - **Fast.** +8.9% @20T / +14.3% @24T vs the Rust competitor; parity with the canonical PGO
   C miner, edging it +0.5% at 24T peak (6 wins / 0 losses / 2 ties over 8 rounds). See
   [BENCHMARKS.md](BENCHMARKS.md) — including the caveats (the C margin is within cross-tool
@@ -27,12 +37,13 @@ used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ONE VOTE.
   (SA-IS/libsais) PoW before it is sent, so a bug or hardware glitch costs a share rather
   than submitting garbage.
 - **100% Rust hash, no C toolchain (x86).** The whole AstroBWTv3 hash path is pure Rust:
-  `astrobwt/src/v114.rs` is `#![forbid(unsafe_code)]`, its rare refusal fallback is the
-  pure-Rust `sais32` (not C libsais), and `--features v114` compiles with **no C compiler at
-  all** — no clang-cl, no cc/libsais. The C++ descriptor SA and the C libsais are opt-in
-  differential-fuzz oracles behind the dev-only `v114-cpp` feature. The pool TLS is pure Rust too
-  (`rustls` + `rustls-rustcrypto`, replacing `ring`'s C/assembly), so building needs no C
-  compiler and the shipped binary links no C dependency. **arm64 exception (v0.2.8+):** ARM's
+  `astrobwt/src/v114.rs` uses narrowly audited unsafe fixed-width loads/copies, its rare
+  refusal fallback is the pure-Rust `sais32` (not C libsais), and `--features v114` compiles
+  with **no C compiler at all** — no clang-cl, no cc/libsais. The C++ descriptor SA and C
+  libsais are opt-in differential-fuzz oracles behind the dev-only `v114-cpp` feature. The
+  pool TLS is pure Rust too (`rustls` + `rustls-rustcrypto`, replacing `ring`'s C/assembly),
+  so building needs no C compiler and the shipped binary links no C dependency. **arm64
+  exception (v0.2.8+):** ARM's
   hardware SHA-256 comes from `sha2`'s `asm` feature, which also drags in a C-assembled
   `sha256_aarch64.S` that nothing on aarch64 ever calls — that backend is Rust `asm!` plus NEON
   intrinsics — but which still has to compile, so arm64 builds need a C compiler for the target.

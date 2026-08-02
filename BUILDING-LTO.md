@@ -1,9 +1,9 @@
 # Building this miner
 
 The performance feature flag is `v114` — the descriptor suffix array, ~74–88% of each
-hash. It is now a **pure-Rust** implementation (`astrobwt/src/v114.rs`,
-`#![forbid(unsafe_code)]`), ported from the C++ that used to be vendored under
-`astrobwt/vendor/v114`. All real builds use `--features v114`.
+hash. It is now a **pure-Rust** implementation (`astrobwt/src/v114.rs`, with narrowly
+audited unsafe fixed-width loads/copies), ported from the C++ that used to be vendored
+under `astrobwt/vendor/v114`. All real builds use `--features v114`.
 
 **There is one build.** `cargo build --release -p dero-miner --features v114` — stable
 toolchain, no C++ compiler, no `.cargo/config.toml`, no PGO profile. That is the
@@ -42,9 +42,8 @@ than plain `release` (18.5 → 17.3 KH/s @24T; see BENCHMARKS.md). `release-lto`
 LTO the Rust and the C++ *together* — with no C++ in the build there is nothing to link
 across, and its remaining effect here is negative.
 
-The untried lever is single-language rustc PGO (`-Cprofile-generate` / `-Cprofile-use`),
-now a one-toolchain operation. The C++ historically gained ~12.5% from clang PGO on the
-descriptor TU, so this is the obvious next experiment.
+Single-language rustc PGO (`-Cprofile-generate` / `-Cprofile-use`) was tested and did not
+beat plain `release`, so the release does not carry a profile.
 
 ---
 

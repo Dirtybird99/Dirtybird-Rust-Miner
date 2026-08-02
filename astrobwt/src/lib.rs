@@ -20,9 +20,9 @@
 pub mod difficulty;
 pub mod hashes;
 pub mod lpbuf;
-mod ops_generated;
 #[cfg(all(feature = "avx2ops", target_arch = "x86_64"))]
 mod ops_avx2;
+mod ops_generated;
 pub mod pow16;
 pub mod rc4;
 pub mod sais16;
@@ -517,7 +517,7 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
                     &mut scratch.sa,
                 );
                 if used_v114 {
-                    sha256_sa_i32_le(&scratch.sa[..])
+                    sha256_sa_i32_le(&scratch.sa[..data_len])
                 } else {
                     // Descriptor SA refused this input (~never on real work).
                     // Fall back to the pure-Rust SA-IS — byte-identical SA, and a
@@ -535,7 +535,7 @@ pub fn astrobwtv3_with_scratch(input: &[u8], scratch: &mut AstroBwtScratch) -> [
                 &mut scratch.sa,
             );
             if used_v114 {
-                sha256_sa_i32_le(&scratch.sa[..])
+                sha256_sa_i32_le(&scratch.sa[..data_len])
             } else {
                 let sa = sais32::suffix_array(&scratch.data[..data_len]);
                 sha256_sa_i32_le(&sa)
@@ -592,18 +592,18 @@ pub fn astrobwtv3_x2(
 
         if used_a && used_b {
             return sha256_x2::sha256_x2(
-                bytemuck::cast_slice(&sa.sa),
-                bytemuck::cast_slice(&sb.sa),
+                bytemuck::cast_slice(&sa.sa[..len_a]),
+                bytemuck::cast_slice(&sb.sa[..len_b]),
             );
         }
 
         let hash_a = if used_a {
-            sha256_sa_i32_le(&sa.sa)
+            sha256_sa_i32_le(&sa.sa[..len_a])
         } else {
             sha256_sa_i32_le(&sais32::suffix_array(&sa.data[..len_a]))
         };
         let hash_b = if used_b {
-            sha256_sa_i32_le(&sb.sa)
+            sha256_sa_i32_le(&sb.sa[..len_b])
         } else {
             sha256_sa_i32_le(&sais32::suffix_array(&sb.data[..len_b]))
         };
@@ -810,7 +810,7 @@ pub fn astrobwtv3_stage_cycles(input: &[u8], scratch: &mut AstroBwtScratch) -> [
         let t3 = tick();
         let _ = match &fallback {
             Some(sa) => sha256_sa_i32_le(sa),
-            None => sha256_sa_i32_le(&scratch.sa[..]),
+            None => sha256_sa_i32_le(&scratch.sa[..data_len]),
         };
         let t4 = tick();
         return [t1 - t0, t2 - t1, t3 - t2, t4 - t3];
@@ -925,7 +925,7 @@ mod tests {
             );
             eprintln!(
                 "  as-is        : used={used} sa==libsais={}",
-                used && sa[..] == want[..]
+                used && sa[..dl] == want[..]
             );
             let end = (dl + 64).min(scratch.data.len());
             for b in &mut scratch.data[dl..end] {
@@ -940,7 +940,7 @@ mod tests {
             );
             eprintln!(
                 "  zeroed-tail  : used={used2} sa==libsais={}",
-                used2 && sa[..] == want[..]
+                used2 && sa[..dl] == want[..]
             );
             shown += 1;
             if shown >= 5 {
@@ -1087,7 +1087,7 @@ mod tests {
                 &mut scratch.v114_flags,
                 &mut scratch.sa,
             );
-            if used && scratch.sa[..] != want[..] {
+            if used && scratch.sa[..data_len] != want[..] {
                 diverged += 1;
                 if tz > 0 {
                     diverged_with_tz += 1;
@@ -1140,7 +1140,7 @@ mod tests {
             assert!(used_v114, "v114 should accept AstroBWT-shaped data");
 
             assert_eq!(
-                &scratch.sa[..],
+                &scratch.sa[..data_len],
                 want,
                 "v114 SA mismatch for input {input:?}"
             );
