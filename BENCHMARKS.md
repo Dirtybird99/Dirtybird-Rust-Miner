@@ -1,5 +1,25 @@
 # Benchmarks
 
+## v0.2.12 fixed short-run copy (2026-08-02)
+
+The materialized descriptor path emits runs averaging only a few positions. On the measured
+Windows release, v0.2.11 sent every run through the general CRT `memcpy`; v0.2.12 uses four
+fixed 16-byte moves for runs of eight positions or fewer and retains `memcpy` for longer
+runs. Release assembly was checked to confirm the short path no longer calls the CRT.
+
+Alternating runs used the same deterministic 2,500-pair production-x2 corpus. Every arm
+produced checksum `4bd773cf950c05ae`; lower time is better.
+
+| build | mean µs/hash | p95 µs/hash |
+|---|---:|---:|
+| v0.2.11 baseline | 474.71 | 506.98 |
+| **v0.2.12** | **464.29** | **496.13** |
+| **change** | **−2.19%** | **−2.14%** |
+
+Five-second sustained B-C-C-B gates improved from 2.001 to 2.075 KH/s at one thread
+(+3.71%) and from 21.259 to 21.633 KH/s at 20 threads (+1.76%). These are regression
+gates from one Windows x86-64 host, not universal hardware claims.
+
 ## v0.2.11 pure-Rust materializer (2026-08-02)
 
 The release gate used alternating runs of the same deterministic 2,500-pair production-x2

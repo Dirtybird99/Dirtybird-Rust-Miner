@@ -1328,6 +1328,19 @@ fn build_materialized_group_runs(
 /// Copy one arena-backed run with the same unconditional eight-word move as
 /// the current Zig implementation. The source and destination both include
 /// seven initialized tail words, so the final short run remains in bounds.
+/// Kept out of line so LLVM cannot fold it back into a variable-sized `memcpy`.
+///
+/// # Safety
+/// `src` and `dst` must be valid, non-overlapping eight-word regions.
+#[inline(never)]
+unsafe fn copy_materialized_block(dst: *mut u32, src: *const u32) {
+    let block =
+        unsafe { std::ptr::read_unaligned(src.cast::<[u32; MATERIALIZED_SA_COPY_WORDS]>()) };
+    unsafe {
+        std::ptr::write_unaligned(dst.cast::<[u32; MATERIALIZED_SA_COPY_WORDS]>(), block);
+    }
+}
+
 #[inline]
 fn copy_materialized_run(
     dst: &mut [u32],
@@ -1346,11 +1359,15 @@ fn copy_materialized_run(
     // decoded run is inside the logical arena, and mutable/immutable borrows
     // guarantee these regions do not overlap.
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            arena.as_ptr().add(begin),
-            dst.as_mut_ptr().add(dst_begin),
-            count.max(MATERIALIZED_SA_COPY_WORDS),
-        );
+        if count <= MATERIALIZED_SA_COPY_WORDS {
+            copy_materialized_block(dst.as_mut_ptr().add(dst_begin), arena.as_ptr().add(begin));
+        } else {
+            std::ptr::copy_nonoverlapping(
+                arena.as_ptr().add(begin),
+                dst.as_mut_ptr().add(dst_begin),
+                count,
+            );
+        }
     }
     count
 }

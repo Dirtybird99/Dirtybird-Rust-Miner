@@ -16,6 +16,14 @@ from the C++ that used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ON
 
 ## Highlights
 
+### v0.2.12
+
+v0.2.12 replaces the materialized path's per-run general `memcpy` call with a fixed
+eight-word pure-Rust copy for its common short runs. On the deterministic 2,500-pair
+production-x2 corpus, alternating runs cut mean time by 2.19% and p95 by 2.14% with the
+same checksum. Five-second sustained gates improved 3.71% at one thread and 1.76% at 20
+threads. Two-way SHA remains enabled; the x86 hash path still links no C/C++ backend.
+
 ### v0.2.11
 
 v0.2.11 speeds up the pure-Rust materialized `v114` path while keeping 2-way SHA-NI
