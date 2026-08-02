@@ -1,5 +1,34 @@
 # Benchmarks
 
+## v0.2.11 pure-Rust materializer (2026-08-02)
+
+The release gate used alternating runs of the same deterministic 2,500-pair production-x2
+corpus. Every build produced checksum `4bd773cf950c05ae`; lower time is better.
+
+| build | mean µs/hash | p95 µs/hash |
+|---|---:|---:|
+| v0.2.10 baseline | 611.80 | 649.38 |
+| **v0.2.11** | **488.98** | **523.25** |
+| **change** | **−20.1%** | **−19.4%** |
+
+The retained stable slice sorts were also compared with an otherwise identical
+`sort_unstable_by` control:
+
+| sort control | mean µs/hash | p95 µs/hash |
+|---|---:|---:|
+| unstable | 522.31 | 561.78 |
+| **stable (retained)** | **514.76** | **550.70** |
+| **change** | **−1.45%** | **−1.97%** |
+
+Short sustained ABBA regression gates improved from 1.547 to 1.628 KH/s at one thread
+(+5.2%) and from 16.006 to 16.815 KH/s at 20 threads (+5.1%). These five-second gates and
+the fixed-corpus results are from one Windows x86-64 host, not universal hardware or
+cross-miner claims. Plain stable `release` remains the recommended build; rustc PGO and
+additional compiler/code-shape experiments did not beat it.
+
+The comparisons below are retained as historical results from earlier binaries and
+harnesses.
+
 Measured 2026-06-20 on an **Intel i7-13700HX** (8 P-cores / 8 E-cores, 24 threads),
 Windows 11. All numbers are KH/s (thousands of AstroBWTv3 hashes/sec), higher is better.
 
@@ -74,8 +103,8 @@ better at peak.
 ## Pure-Rust descriptor SA vs the vendored C++ (2026-07-10)
 
 The v1.14 descriptor suffix array — ~88% of a hash — was ported from the vendored C++
-(`astrobwt/vendor/v114/v114_stubs.cpp`, 2,400 lines) to pure Rust
-(`astrobwt/src/v114.rs`, `#![forbid(unsafe_code)]`). Both backends ship in one binary;
+(`astrobwt/vendor/v114/v114_stubs.cpp`, 2,400 lines) to pure Rust with narrowly audited
+unsafe fixed-width loads/copies (`astrobwt/src/v114.rs`). Both backends ship in one binary;
 `DERO_V114_CPP=1` selects the C++.
 
 Measured with [`v114_ab.ps1`](v114_ab.ps1) — same binary, one backend per run, alternating
@@ -135,10 +164,8 @@ the instruction set. Hypothesis raised, tested, refuted.
 `release-lto` existed to LTO the Rust and the C++ *together*; with no C++ in the build there
 is nothing to link across, and fat LTO's remaining effect here is negative.
 
-Untried lever: single-language rustc PGO (`-Cprofile-generate` / `-Cprofile-use`). The C++
-path historically gained ~12.5% from clang PGO on the descriptor TU, so this is the obvious
-next experiment — and it is now a one-toolchain operation instead of the dual rustc+clang
-profile dance in [BUILDING-LTO.md](BUILDING-LTO.md).
+Single-language rustc PGO (`-Cprofile-generate` / `-Cprofile-use`) was tested after these
+historical runs and did not beat plain `release`, so it is not used for v0.2.11.
 
 > Absolute numbers here are **not** comparable to the 22.3 KH/s headline at the top of this
 > file: that build used nightly dual-PGO + cross-language LTO + `target-cpu=native`. None of
