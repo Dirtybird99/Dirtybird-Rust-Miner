@@ -84,12 +84,8 @@ fn evaluate(input: &[u8], scratch: &mut AstroBwtScratch) -> Case {
     // Re-drive both descriptor entry points on the op-loop output the pipeline
     // just produced (same pattern as the diagnostic tests in lib.rs).
     let mut flags: Vec<u8> = Vec::new();
-    let fused = sais32::hash_v114_fused_into(
-        &scratch.data,
-        data_len,
-        &scratch.v114_markers,
-        &mut flags,
-    );
+    let fused =
+        sais32::hash_v114_fused_into(&scratch.data, data_len, &scratch.v114_markers, &mut flags);
     let mut sa = crate::lpbuf::LpVec::<i32>::with_capacity(data_len);
     let sa_used = sais32::suffix_array_v114_into(
         &scratch.data,
@@ -100,7 +96,7 @@ fn evaluate(input: &[u8], scratch: &mut AstroBwtScratch) -> Case {
     );
     let sa_digest = sa_used.then(|| {
         let mut h = Sha256::new();
-        for &v in &sa[..] {
+        for &v in &sa[..data_len] {
             h.update(v.to_le_bytes());
         }
         hex::encode(h.finalize())
@@ -147,7 +143,10 @@ fn v114_matches_golden_fixture() {
         let input = hex::decode(&w.input_hex).unwrap();
         let got = evaluate(&input, &mut scratch);
         assert_eq!(got.data_len, w.data_len, "case {i}: op-loop data_len");
-        assert_eq!(got.pow_hash_hex, w.pow_hash_hex, "case {i}: pipeline PoW hash");
+        assert_eq!(
+            got.pow_hash_hex, w.pow_hash_hex,
+            "case {i}: pipeline PoW hash"
+        );
         assert_eq!(
             got.fused_hash_hex, w.fused_hash_hex,
             "case {i}: fused hash / refusal parity"

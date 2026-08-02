@@ -315,19 +315,30 @@ pub(crate) fn suffix_array_v114_into(
     {
         return false;
     }
-    sa.resize(logical_len, 0);
-
     #[cfg(feature = "v114-cpp")]
     if use_cpp_backend() {
+        sa.resize(logical_len, 0);
         return suffix_array_v114_cpp_into(data_with_tail, logical_len, flags, flag_len, sa);
     }
 
-    crate::v114::sa_build_compact_fused(
+    let Some(padded_len) = logical_len.checked_add(crate::v114::MATERIALIZED_SA_TAIL_WORDS) else {
+        return false;
+    };
+    if padded_len.checked_mul(std::mem::size_of::<i32>()).is_none() {
+        return false;
+    }
+    if sa.len() < padded_len {
+        sa.resize(padded_len, 0);
+    }
+    let built = crate::v114::sa_build_compact_fused(
         data_with_tail,
         logical_len,
         &flags[..flag_len as usize],
-        sa.as_mut_slice(),
-    )
+        &mut sa.as_mut_slice()[..padded_len],
+    );
+    // Keep the high-water allocation initialized: callers hash only the
+    // logical prefix, and the next shorter hash avoids a full shrink/grow fill.
+    built
 }
 
 /// The vendored C++ descriptor SA, called directly. Reached from the A/B

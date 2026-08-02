@@ -10,17 +10,15 @@
 //! The descriptor SA exploits the repeat structure recorded by wolfCompute
 //! (per-template group markers → `flags`) to build the EXACT suffix array of
 //! the Wolf-permuted, period-256 self-similar op-loop output ~2× faster than
-//! libsais. Byte-identical to libsais on accepted inputs; it refuses exactly
-//! where the C++ refused, so the caller's libsais fallback fires on the same
-//! inputs.
+//! libsais. Byte-identical to the canonical suffix array on accepted inputs;
+//! it refuses where the descriptor path is invalid, so the caller's pure-Rust
+//! `sais32` fallback handles the same inputs.
 //!
-//! Faithful, line-by-line port in the `sais16.rs` house style: each item cites
-//! its C++ source (`v114_stubs.cpp` line numbers, vendored copy of 2,679
-//! lines). Only functions reachable from the two wrapper entry points
-//! (`v114_sa_build_fused`, `v114_hash_fused`) are ported — the DLS4IN/DLS5IN
-//! replay parsers, the non-fused emit family, and the descriptor validators
-//! (`stage_v114_sa_build_descriptor{,_trusted}`) are dead in this tree and die
-//! with the vendor directory.
+//! The streaming/hash path is a faithful port in the `sais16.rs` house style;
+//! its items cite their C++ source (`v114_stubs.cpp` line numbers). The
+//! materialized x2 path uses a measured Rust/Zig-style run builder over the
+//! same descriptor stages. Only code reachable from the two wrapper entry
+//! points (`v114_sa_build_fused`, `v114_hash_fused`) is retained.
 //!
 //! Intentional deviations (all invisible in the output bytes):
 //! - SHA-256 comes from the `sha2` crate directly; the C++ called OpenSSL-style
@@ -29,13 +27,10 @@
 //!   `write_u32_le`. Identical bytes on little-endian, which the caller
 //!   already requires.
 //! - The env-gated `DLUNA_PROFILE_STAGE5_FUSED` rdtsc counters are dropped
-//!   (measurement-only; rdtsc is an unsafe intrinsic and this module is
-//!   `forbid(unsafe_code)`). The `profiling` crate feature is unaffected.
+//!   (measurement-only). The `profiling` crate feature is unaffected.
 //! - Per-thread scratch is a `thread_local!` `RefCell` that drops at thread
 //!   exit, not the C++'s deliberately-leaked `new` (a MinGW emutls workaround
 //!   that does not apply here).
-
-#![forbid(unsafe_code)]
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -56,6 +51,11 @@ const STAGE4_MAX_GROUP_COUNT: u32 = DESCRIPTOR_ARENA_INDEX_COUNT >> 8;
 const STAGE4_SHORT_RUN_MAX: u32 = 25;
 /// C++ `FusedHashSink::kBufferWords` (l.1570).
 const SINK_BUFFER_WORDS: usize = 2048;
+/// The pure-Zig materializer copies eight positions unconditionally, then
+/// advances by the run's real length. Seven initialized tail words keep the
+/// final short copy within the allocated scratch slices.
+pub(crate) const MATERIALIZED_SA_TAIL_WORDS: usize = 7;
+const MATERIALIZED_SA_COPY_WORDS: usize = MATERIALIZED_SA_TAIL_WORDS + 1;
 
 /// C++ `env_flag_enabled` (l.57): true iff the value is exactly `"1"`.
 fn env_flag_enabled(name: &str) -> bool {
@@ -117,20 +117,27 @@ fn load24_padded(data: &[u8], pos: u32) -> u32 {
     v
 }
 
-/// C++ `load24_unchecked` (l.231). Callers reach it only when
-/// [`has_load24_padding`] holds, so `pos + 2 < data.len()`; the slice bound is
-/// a check the C++ lacked, not a behavior change.
-#[inline]
+/// C++ `load24_unchecked` (l.231). The fused entrypoints expose three tail
+/// bytes and every emitted position is below `logical_len`, so this four-byte
+/// unaligned read is within `data` even for the last suffix.
+#[inline(always)]
 fn load24_unchecked(data: &[u8], pos: u32) -> u32 {
     let pos = pos as usize;
-    u32::from(data[pos]) | (u32::from(data[pos + 1]) << 8) | (u32::from(data[pos + 2]) << 16)
+    debug_assert!(pos.checked_add(4).is_some_and(|end| end <= data.len()));
+    // SAFETY: all callers operate on positions in `0..logical_len`, while the
+    // validated input slice is `logical_len + 3` bytes long.
+    unsafe {
+        u32::from_le(std::ptr::read_unaligned(
+            data.as_ptr().add(pos).cast::<u32>(),
+        )) & 0x00ff_ffff
+    }
 }
 
-/// C++ `has_load24_padding` (l.237). `logical_len <= 0x20000` and `data_len`
-/// is `logical_len + 3` in the fused path, so the `+ 2` cannot overflow.
+/// C++ `has_load24_padding` (l.237), strengthened for the four-byte masked
+/// load used above. `logical_len <= 0x20000`, so the addition cannot overflow.
 #[inline]
 fn has_load24_padding(view: &Stage4View) -> bool {
-    view.data.len() as u64 >= u64::from(view.logical_len) + 2
+    view.data.len() as u64 >= u64::from(view.logical_len) + 3
 }
 
 /// C++ `load24_fast` (l.241).
@@ -144,9 +151,16 @@ fn load24_fast(view: &Stage4View, pos: u32, padded: bool) -> u32 {
 }
 
 /// C++ `load_be64` (l.814).
-#[inline]
+#[inline(always)]
 fn load_be64(data: &[u8], pos: usize) -> u64 {
-    u64::from_be_bytes(data[pos..pos + 8].try_into().expect("8-byte window"))
+    debug_assert!(pos.checked_add(8).is_some_and(|end| end <= data.len()));
+    // SAFETY: comparator callers prove an eight-byte common suffix window
+    // before reaching this load.
+    unsafe {
+        u64::from_be(std::ptr::read_unaligned(
+            data.as_ptr().add(pos).cast::<u64>(),
+        ))
+    }
 }
 
 // ===========================================================================
@@ -178,6 +192,39 @@ fn compare_suffixes_s4(view: &Stage4View, a: u32, b: u32) -> Ordering {
     } else {
         Ordering::Greater
     }
+}
+
+/// Full suffix order used by the pure-Zig group-run builder: compare unsigned
+/// bytes eight at a time as big-endian integers, finish the short remainder
+/// byte-wise, then put the shorter suffix first when one is a proper prefix.
+fn compare_suffixes_full_8(view: &Stage5View, a: u32, b: u32) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+
+    let logical_len = view.logical_len as usize;
+    let a = a as usize;
+    let b = b as usize;
+    let a_len = logical_len - a;
+    let b_len = logical_len - b;
+    let common = a_len.min(b_len);
+    let mut offset = 0usize;
+
+    while offset + 8 <= common {
+        let cmp = load_be64(view.data, a + offset).cmp(&load_be64(view.data, b + offset));
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        offset += 8;
+    }
+    while offset < common {
+        let cmp = view.data[a + offset].cmp(&view.data[b + offset]);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        offset += 1;
+    }
+    a_len.cmp(&b_len)
 }
 
 /// C++ `compare_suffixes_after_key` (l.825): order the suffixes at `a` and `b`
@@ -253,18 +300,34 @@ fn sort_stage4_suffix_order_small(view: &Stage4View, order: &mut [u32]) {
 /// follows that byte.
 #[inline]
 fn step_back_and_reorder(data: &[u8], order: &mut [u32]) {
-    for pos in order.iter_mut() {
-        *pos -= 1;
-    }
-    for i in 1..order.len() {
-        let pos = order[i];
-        let key = data[pos as usize];
-        let mut j = i;
-        while j > 0 && data[order[j - 1] as usize] > key {
-            order[j] = order[j - 1];
-            j -= 1;
+    debug_assert!(order
+        .iter()
+        .all(|&pos| pos > 0 && (pos as usize) < data.len()));
+    let order_ptr = order.as_mut_ptr();
+    let data_ptr = data.as_ptr();
+    // SAFETY: the caller's positions are in `1..data.len()`. Every order
+    // access is below `order.len()` and every shifted position came from that
+    // already-validated set.
+    unsafe {
+        for i in 0..order.len() {
+            *order_ptr.add(i) -= 1;
         }
-        order[j] = pos;
+        for i in 1..order.len() {
+            let pos = *order_ptr.add(i);
+            let key = *data_ptr.add(pos as usize);
+            let mut j = i;
+            while j > 0 {
+                let previous = *order_ptr.add(j - 1);
+                if *data_ptr.add(previous as usize) <= key {
+                    break;
+                }
+                j -= 1;
+            }
+            if j < i {
+                std::ptr::copy(order_ptr.add(j), order_ptr.add(j + 1), i - j);
+            }
+            *order_ptr.add(j) = pos;
+        }
     }
 }
 
@@ -299,7 +362,11 @@ fn make_stage5_run(key: u32, begin: u32, count: u32, scratch: bool) -> Stage5Run
     debug_assert!(scratch || count <= STAGE4_MAX_GROUP_COUNT);
     Stage5Run {
         key,
-        packed: if scratch { begin } else { (count << 17) + begin },
+        packed: if scratch {
+            begin
+        } else {
+            (count << 17) + begin
+        },
     }
 }
 
@@ -347,22 +414,24 @@ fn fused_run_pos(arena_positions: &[u32], run: Stage5Run, rel: u32) -> u32 {
 // (`radix_sort_runs_by_key`, l.947, is replay-only: not ported.)
 // ===========================================================================
 
-/// C++ `radix_sort_runs_by_stored_key` (l.973): 3-pass LSB radix sort on the
-/// already byte-swapped stored key. Ends with the sorted data in `runs`.
-fn radix_sort_runs_by_stored_key(runs: &mut Vec<Stage5Run>, tmp: &mut Vec<Stage5Run>) {
-    let n = runs.len();
+/// Three-pass LSB radix sort over the logical `runs[..n]` prefix. Both vectors
+/// may stay sized for the largest hash seen by this thread; the final swap is
+/// O(1) and the caller keeps tracking `n` separately.
+fn radix_sort_runs_by_stored_key_prefix(
+    runs: &mut Vec<Stage5Run>,
+    tmp: &mut Vec<Stage5Run>,
+    n: usize,
+) {
     if n <= 1 {
         return;
     }
-    // `resize` alone, exactly as the C++ (l.975): pass 0 writes every slot, so
-    // pre-zeroing is pure overhead. A `clear()` first would re-zero the whole
-    // reused buffer on every hash.
-    tmp.resize(n, Stage5Run::default());
+    debug_assert!(runs.len() >= n);
+    debug_assert!(tmp.len() >= n);
 
     let mut counts0 = [0u32; 256];
     let mut counts1 = [0u32; 256];
     let mut counts2 = [0u32; 256];
-    for run in runs.iter() {
+    for run in &runs[..n] {
         counts0[(run.key & 0xff) as usize] += 1;
         counts1[((run.key >> 8) & 0xff) as usize] += 1;
         counts2[((run.key >> 16) & 0xff) as usize] += 1;
@@ -375,9 +444,12 @@ fn radix_sort_runs_by_stored_key(runs: &mut Vec<Stage5Run>, tmp: &mut Vec<Stage5
         *c = sum;
         sum += n;
     }
-    for run in runs.iter() {
+    for run in &runs[..n] {
         let slot = &mut counts0[(run.key & 0xff) as usize];
-        tmp[*slot as usize] = *run;
+        let dst = *slot as usize;
+        debug_assert!(dst < n);
+        // SAFETY: prefix sums assign every input run one slot in `0..n`.
+        unsafe { *tmp.get_unchecked_mut(dst) = *run };
         *slot += 1;
     }
 
@@ -388,9 +460,12 @@ fn radix_sort_runs_by_stored_key(runs: &mut Vec<Stage5Run>, tmp: &mut Vec<Stage5
         *c = sum;
         sum += n;
     }
-    for run in tmp.iter() {
+    for run in &tmp[..n] {
         let slot = &mut counts1[((run.key >> 8) & 0xff) as usize];
-        runs[*slot as usize] = *run;
+        let dst = *slot as usize;
+        debug_assert!(dst < n);
+        // SAFETY: prefix sums assign every input run one slot in `0..n`.
+        unsafe { *runs.get_unchecked_mut(dst) = *run };
         *slot += 1;
     }
 
@@ -401,12 +476,31 @@ fn radix_sort_runs_by_stored_key(runs: &mut Vec<Stage5Run>, tmp: &mut Vec<Stage5
         *c = sum;
         sum += n;
     }
-    for run in runs.iter() {
+    for run in &runs[..n] {
         let slot = &mut counts2[((run.key >> 16) & 0xff) as usize];
-        tmp[*slot as usize] = *run;
+        let dst = *slot as usize;
+        debug_assert!(dst < n);
+        // SAFETY: prefix sums assign every input run one slot in `0..n`.
+        unsafe { *tmp.get_unchecked_mut(dst) = *run };
         *slot += 1;
     }
     std::mem::swap(runs, tmp);
+}
+
+/// C++ `radix_sort_runs_by_stored_key` (l.973): streaming-path wrapper whose
+/// logical length is still represented by `Vec::len()`.
+fn radix_sort_runs_by_stored_key(runs: &mut Vec<Stage5Run>, tmp: &mut Vec<Stage5Run>) {
+    let n = runs.len();
+    if n <= 1 {
+        return;
+    }
+    if tmp.len() < n {
+        tmp.resize(n, Stage5Run::default());
+    }
+    radix_sort_runs_by_stored_key_prefix(runs, tmp, n);
+    // `tmp` can be a retained materialized buffer larger than this streaming
+    // run set. The streaming path continues to use `runs.len()` as canonical.
+    runs.truncate(n);
 }
 
 // ===========================================================================
@@ -547,6 +641,8 @@ struct FusedScratch {
     next_run_lengths: Vec<u32>,
     runs: Vec<Stage5Run>,
     radix_tmp: Vec<Stage5Run>,
+    materialized_arena_len: usize,
+    materialized_runs_len: usize,
 }
 
 /// The four buffers the Stage-4 emit walk touches, borrowed as disjoint fields
@@ -998,8 +1094,7 @@ impl FusedHashSink {
 
             let space = SINK_BUFFER_WORDS - self.buffered;
             let chunk = positions.len().min(space);
-            self.buffer[self.buffered..self.buffered + chunk]
-                .copy_from_slice(&positions[..chunk]);
+            self.buffer[self.buffered..self.buffered + chunk].copy_from_slice(&positions[..chunk]);
             self.buffered += chunk;
             self.positions += chunk;
             positions = &positions[chunk..];
@@ -1024,93 +1119,303 @@ impl FusedHashSink {
 // Run emission — v114_stubs.cpp:1711-1920
 // ===========================================================================
 
-/// C++ `write_fused_runs_to_sa` (l.1711): sort the runs by key, then emit each
-/// equal-key group in suffix order into `out`.
-///
-/// `out` is the `i32` suffix array itself rather than a byte buffer; on
-/// little-endian the written bytes are identical to the C++'s `write_u32_le`.
-fn write_fused_runs_to_sa(view: &Stage5View, scratch: &mut FusedScratch, out: &mut [i32]) -> bool {
-    if out.len() < view.logical_len as usize {
+/// Pure-Zig-style materialized emitter. The backing vectors remain sized for
+/// the largest hash seen by the thread; these two counters are the canonical
+/// logical lengths. Writes use indexed assignment into initialized storage,
+/// avoiding a `Vec::push`/capacity branch for every emitted run and position.
+struct MaterializedBuilder<'scratch, 'data> {
+    data: &'data [u8],
+    logical_len: u32,
+    arena: &'scratch mut [u32],
+    runs: &'scratch mut [Stage5Run],
+    arena_len: usize,
+    runs_len: usize,
+}
+
+impl MaterializedBuilder<'_, '_> {
+    /// Record one already suffix-sorted, same-prefix run.
+    #[inline(always)]
+    fn append_run(&mut self, positions: &[u32]) {
+        let count = positions.len();
+        debug_assert!((1..=STAGE4_MAX_GROUP_COUNT as usize).contains(&count));
+        let begin = self.arena_len;
+        let end = begin + count;
+        debug_assert!(end <= self.arena.len());
+        debug_assert!(self.runs_len < self.runs.len());
+
+        // SAFETY: the builder owns disjoint scratch fields; the capacity and
+        // non-empty run invariants are checked when the builder is created.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                positions.as_ptr(),
+                self.arena.as_mut_ptr().add(begin),
+                count,
+            );
+            let first = *positions.get_unchecked(0);
+            self.runs
+                .as_mut_ptr()
+                .add(self.runs_len)
+                .write(make_stage5_run(
+                    stage5_radix_order_key(load24_unchecked(self.data, first)),
+                    begin as u32,
+                    count as u32,
+                    false,
+                ));
+        }
+        self.arena_len = end;
+        self.runs_len += 1;
+    }
+
+    /// Emit consecutive positions as arena-backed singleton runs. Keep this
+    /// direct: it is the common one-chunk/tail path and can account for tens of
+    /// thousands of records per hash.
+    #[inline]
+    fn emit_literals(&mut self, start: u32, count: u32) {
+        let count = count as usize;
+        debug_assert!(self.arena_len + count <= self.arena.len());
+        debug_assert!(self.runs_len + count <= self.runs.len());
+        debug_assert!(start as usize + count <= self.logical_len as usize);
+        // SAFETY: the grow-only scratch slices were sized to `logical_len`;
+        // this batch's ranges were proved above and positions stay below it.
+        unsafe {
+            let arena = self.arena.as_mut_ptr().add(self.arena_len);
+            let runs = self.runs.as_mut_ptr().add(self.runs_len);
+            for rel in 0..count {
+                let pos = start + rel as u32;
+                arena.add(rel).write(pos);
+                runs.add(rel).write(make_stage5_run(
+                    stage5_radix_order_key(load24_unchecked(self.data, pos)),
+                    (self.arena_len + rel) as u32,
+                    1,
+                    false,
+                ));
+            }
+        }
+        self.arena_len += count;
+        self.runs_len += count;
+    }
+
+    /// At rel=255 the same-offset suffixes are fully sorted once. Each earlier
+    /// rel prepends one byte and restores order by a stable insertion on that
+    /// byte alone (`>` deliberately preserves ties).
+    fn emit_group_run(&mut self, start_group: u32, end_group: u32, order: &mut [u32]) {
+        let group_count = end_group - start_group;
+        if group_count == 0 {
+            return;
+        }
+        debug_assert!(group_count <= STAGE4_MAX_GROUP_COUNT);
+
+        let base = start_group << 8;
+        if group_count == 1 {
+            self.emit_literals(base, 256);
+            return;
+        }
+
+        let n = group_count as usize;
+        debug_assert!(order.len() >= n);
+        let order = &mut order[..n];
+        for (chunk, pos) in order.iter_mut().enumerate() {
+            *pos = base + ((chunk as u32) << 8) + 255;
+        }
+        let suffix_view = Stage5View {
+            logical_len: self.logical_len,
+            data: self.data,
+        };
+        order.sort_by(|&a, &b| compare_suffixes_full_8(&suffix_view, a, b));
+
+        for rel in (0..=255u32).rev() {
+            let mut group_start = 0usize;
+            while group_start < n {
+                let key = load24_unchecked(self.data, order[group_start]);
+                let mut group_end = group_start + 1;
+                while group_end < n && load24_unchecked(self.data, order[group_end]) == key {
+                    group_end += 1;
+                }
+                self.append_run(&order[group_start..group_end]);
+                group_start = group_end;
+            }
+
+            if rel > 0 {
+                step_back_and_reorder(self.data, order);
+            }
+        }
+    }
+}
+
+/// Build the arena-backed group runs used only by the materialized/x2 path.
+/// The older C++-faithful emitter remains intact for streaming x1 hashing.
+fn build_materialized_group_runs(
+    data: &[u8],
+    logical_len: u32,
+    flags: &[u8],
+    scratch: &mut FusedScratch,
+) -> bool {
+    if logical_len == 0 || logical_len > DESCRIPTOR_ARENA_INDEX_COUNT {
+        return false;
+    }
+    let group_limit = logical_len >> 8;
+    if flags.len() as u64 <= u64::from(group_limit) {
+        return false;
+    }
+    let Some(data_len) = (logical_len as usize).checked_add(3) else {
+        return false;
+    };
+    if data.len() < data_len {
         return false;
     }
 
-    radix_sort_runs_by_stored_key(&mut scratch.runs, &mut scratch.radix_tmp);
+    let logical_len_usize = logical_len as usize;
+    let padded_len = logical_len_usize + MATERIALIZED_SA_TAIL_WORDS;
+    // Zig uses fixed per-thread arrays. A grow-only initialized Vec has the
+    // same steady-state behavior while retaining this port's larger accepted
+    // descriptor bound and safe indexing.
+    if scratch.order.len() < STAGE4_MAX_GROUP_COUNT as usize {
+        scratch.order.resize(STAGE4_MAX_GROUP_COUNT as usize, 0);
+    }
+    if scratch.arena_positions.len() < padded_len {
+        scratch.arena_positions.resize(padded_len, 0);
+    }
+    if scratch.runs.len() < logical_len_usize {
+        scratch.runs.resize(logical_len_usize, Stage5Run::default());
+    }
+    if scratch.radix_tmp.len() < logical_len_usize {
+        scratch
+            .radix_tmp
+            .resize(logical_len_usize, Stage5Run::default());
+    }
+    if scratch.group_positions.len() < padded_len {
+        scratch.group_positions.resize(padded_len, 0);
+    }
+    scratch.materialized_arena_len = 0;
+    scratch.materialized_runs_len = 0;
 
-    let mut group_start = 0usize;
-    let mut out_pos = 0usize;
-    while group_start < scratch.runs.len() {
-        let mut group_end = group_start + 1;
-        while group_end < scratch.runs.len()
-            && scratch.runs[group_start].key == scratch.runs[group_end].key
-        {
-            group_end += 1;
-        }
-
-        if group_end == group_start + 1 {
-            let run = scratch.runs[group_start];
-            if !stage5_run_is_literal(run) {
-                let begin = stage5_run_begin(run) as usize;
-                let count = stage5_run_count(run) as usize;
-                // The C++ moves this run with a single memcpy out of the arena
-                // (l.1768); the port had drifted to an elementwise copy because
-                // `out` is `i32` while the arena is `u32`. That cast is a pure
-                // reinterpretation -- `as i32` preserves every bit of a `u32`,
-                // and this function's contract is already the little-endian byte
-                // image -- so `bytemuck` restores the bulk copy with no `unsafe`
-                // and no change to the bytes written. The fused sibling never
-                // lost it (see `write_positions`); only this, the materialized
-                // arm, did -- which is the arm aarch64 runs.
-                out[out_pos..out_pos + count].copy_from_slice(bytemuck::cast_slice(
-                    &scratch.arena_positions[begin..begin + count],
-                ));
-                out_pos += count;
-            } else {
-                out[out_pos] = stage5_run_begin(run) as i32;
-                out_pos += 1;
-            }
-            group_start = group_end;
-            continue;
-        }
-
-        // C++ l.1787: literal fast path, then the two-run merge, then the
-        // general gather+merge fallback.
-        if let Some((positions, count)) =
-            sorted_literal_group(view, &scratch.runs, group_start, group_end)
-        {
-            for &pos in &positions[..count] {
-                out[out_pos] = pos as i32;
-                out_pos += 1;
-            }
-        } else {
-            let mut wrote = 0usize;
-            let handled = {
-                let out = &mut out[out_pos..];
-                try_two_equal_key_runs(
-                    view,
-                    &scratch.arena_positions,
-                    &scratch.runs,
-                    group_start,
-                    group_end,
-                    |pos| {
-                        out[wrote] = pos as i32;
-                        wrote += 1;
-                    },
-                )
-            };
-            if handled {
-                out_pos += wrote;
-            } else {
-                merge_equal_key_group(view, scratch, group_start, group_end);
-                for &pos in &scratch.group_positions {
-                    out[out_pos] = pos as i32;
-                    out_pos += 1;
-                }
+    let data = &data[..data_len];
+    let full_groups = logical_len >> 8;
+    let (arena_len, runs_len) = {
+        let FusedScratch {
+            order,
+            arena_positions,
+            runs,
+            ..
+        } = scratch;
+        let mut builder = MaterializedBuilder {
+            data,
+            logical_len,
+            arena: &mut arena_positions[..logical_len_usize],
+            runs: &mut runs[..logical_len_usize],
+            arena_len: 0,
+            runs_len: 0,
+        };
+        let mut run_start_group = 0u32;
+        for group in 1..=full_groups {
+            if flags[group as usize] != 0 || group == full_groups {
+                builder.emit_group_run(run_start_group, group, order);
+                run_start_group = group;
             }
         }
-        group_start = group_end;
+        builder.emit_literals(full_groups << 8, logical_len & 0xff);
+        (builder.arena_len, builder.runs_len)
+    };
+
+    if arena_len != logical_len_usize || runs_len > logical_len_usize {
+        return false;
+    }
+    scratch.materialized_arena_len = arena_len;
+    scratch.materialized_runs_len = runs_len;
+    true
+}
+
+/// Copy one arena-backed run with the same unconditional eight-word move as
+/// the current Zig implementation. The source and destination both include
+/// seven initialized tail words, so the final short run remains in bounds.
+#[inline]
+fn copy_materialized_run(
+    dst: &mut [u32],
+    dst_begin: usize,
+    arena: &[u32],
+    run: Stage5Run,
+) -> usize {
+    debug_assert!(!stage5_run_is_literal(run));
+    let begin = stage5_run_begin(run) as usize;
+    let count = stage5_run_count(run) as usize;
+    debug_assert!((1..=STAGE4_MAX_GROUP_COUNT as usize).contains(&count));
+    debug_assert!(begin + count <= arena.len() - MATERIALIZED_SA_TAIL_WORDS);
+    debug_assert!(dst_begin + count.max(MATERIALIZED_SA_COPY_WORDS) <= dst.len());
+
+    // SAFETY: both scratch buffers include seven initialized tail words, the
+    // decoded run is inside the logical arena, and mutable/immutable borrows
+    // guarantee these regions do not overlap.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            arena.as_ptr().add(begin),
+            dst.as_mut_ptr().add(dst_begin),
+            count.max(MATERIALIZED_SA_COPY_WORDS),
+        );
+    }
+    count
+}
+
+/// Sort runs globally by their three-byte key, then materialize each key
+/// bucket exactly like the pure-Zig builder: direct fixed-width copy for one
+/// run, fixed-width gather plus a full suffix sort for multiple runs.
+fn materialize_group_runs_to_sa(
+    view: &Stage5View,
+    scratch: &mut FusedScratch,
+    out: &mut [i32],
+) -> bool {
+    let logical_len = view.logical_len as usize;
+    let Some(padded_len) = logical_len.checked_add(MATERIALIZED_SA_TAIL_WORDS) else {
+        return false;
+    };
+    let runs_len = scratch.materialized_runs_len;
+    if out.len() < padded_len
+        || scratch.materialized_arena_len != logical_len
+        || runs_len > logical_len
+        || scratch.arena_positions.len() < padded_len
+        || scratch.runs.len() < runs_len
+        || scratch.radix_tmp.len() < runs_len
+        || scratch.group_positions.len() < padded_len
+    {
+        return false;
     }
 
-    out_pos == view.logical_len as usize
+    radix_sort_runs_by_stored_key_prefix(&mut scratch.runs, &mut scratch.radix_tmp, runs_len);
+
+    let out: &mut [u32] = &mut bytemuck::cast_slice_mut(out)[..padded_len];
+    let FusedScratch {
+        runs,
+        arena_positions,
+        group_positions,
+        ..
+    } = scratch;
+    let runs = &runs[..runs_len];
+    let arena_positions = &arena_positions[..padded_len];
+    let group_positions = &mut group_positions[..padded_len];
+
+    let mut run_start = 0usize;
+    let mut out_pos = 0usize;
+    while run_start < runs.len() {
+        let mut run_end = run_start + 1;
+        while run_end < runs.len() && runs[run_start].key == runs[run_end].key {
+            run_end += 1;
+        }
+
+        if run_end == run_start + 1 {
+            let copied = copy_materialized_run(out, out_pos, arena_positions, runs[run_start]);
+            out_pos += copied;
+        } else {
+            let mut gathered = 0usize;
+            for &run in &runs[run_start..run_end] {
+                gathered += copy_materialized_run(group_positions, gathered, arena_positions, run);
+            }
+            group_positions[..gathered].sort_by(|&a, &b| compare_suffixes_full_8(view, a, b));
+            out[out_pos..out_pos + gathered].copy_from_slice(&group_positions[..gathered]);
+            out_pos += gathered;
+        }
+        run_start = run_end;
+    }
+
+    out_pos == logical_len
 }
 
 /// C++ `write_fused_runs_to_hash` (l.1847): the same walk, streaming straight
@@ -1247,7 +1552,8 @@ fn run_fused_emit(
 /// or returns `false` if the descriptor build refuses (caller: libsais).
 ///
 /// `data` must expose at least `logical_len + 3` bytes (the caller's tail), and
-/// `sa` at least `logical_len` slots.
+/// `sa` at least `logical_len + 7` initialized slots. The canonical suffix
+/// array remains `sa[..logical_len]`; the tail is temporary copy headroom.
 pub(crate) fn sa_build_compact_fused(
     data_with_tail: &[u8],
     logical_len: usize,
@@ -1263,21 +1569,25 @@ pub(crate) fn sa_build_compact_fused(
     let Some(data_len) = logical_len.checked_add(3) else {
         return false;
     };
-    if data_with_tail.len() < data_len || sa.len() < logical_len {
+    let Some(padded_len) = logical_len.checked_add(MATERIALIZED_SA_TAIL_WORDS) else {
+        return false;
+    };
+    if data_with_tail.len() < data_len || sa.len() < padded_len {
         return false;
     }
     let data = &data_with_tail[..data_len];
 
     SCRATCH.with(|cell| {
         let mut scratch = cell.borrow_mut();
-        if run_fused_emit(data, logical_len_u32, flags, &mut scratch).is_none() {
+        let built = build_materialized_group_runs(data, logical_len_u32, flags, &mut scratch);
+        if !built {
             return false;
         }
         let stage5 = Stage5View {
             logical_len: logical_len_u32,
             data,
         };
-        write_fused_runs_to_sa(&stage5, &mut scratch, &mut sa[..logical_len])
+        materialize_group_runs_to_sa(&stage5, &mut scratch, sa)
     })
 }
 
@@ -1310,4 +1620,165 @@ pub(crate) fn hash_compact_fused(
         };
         write_fused_runs_to_hash(&stage5, &mut scratch)
     })
+}
+
+#[cfg(test)]
+mod materialized_group_tests {
+    use super::*;
+
+    fn bytes(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 24) as u8
+            })
+            .collect()
+    }
+
+    fn singleton_chunk_flags(len: usize) -> Vec<u8> {
+        vec![1; (len >> 8) + 1]
+    }
+
+    fn assert_direct_builder_matches(data: &[u8], flags: &[u8]) {
+        let logical_len = data.len();
+        let mut padded_data = data.to_vec();
+        padded_data.extend_from_slice(&[0; 3]);
+
+        const GUARD: i32 = -0x1357_2468;
+        let mut out = vec![GUARD; logical_len + MATERIALIZED_SA_TAIL_WORDS + 1];
+        assert!(sa_build_compact_fused(
+            &padded_data,
+            logical_len,
+            flags,
+            &mut out,
+        ));
+        assert_eq!(
+            out[logical_len + MATERIALIZED_SA_TAIL_WORDS],
+            GUARD,
+            "fixed-width copy crossed the seven-word tail for len={logical_len}"
+        );
+
+        let expected = crate::sais32::suffix_array(data);
+        assert_eq!(
+            &out[..logical_len],
+            expected.as_slice(),
+            "direct group-run SA mismatch for len={logical_len}"
+        );
+
+        SCRATCH.with(|cell| {
+            let scratch = cell.borrow();
+            assert!(scratch.arena_positions.len() >= logical_len + MATERIALIZED_SA_TAIL_WORDS);
+            assert_eq!(scratch.materialized_arena_len, logical_len);
+            assert!(scratch.materialized_runs_len <= logical_len);
+            assert!(scratch.runs.len() >= scratch.materialized_runs_len);
+            let mut positions = 0usize;
+            for &run in &scratch.runs[..scratch.materialized_runs_len] {
+                assert!(!stage5_run_is_literal(run));
+                assert!(run.key <= 0x00ff_ffff);
+                let begin = stage5_run_begin(run) as usize;
+                let count = stage5_run_count(run) as usize;
+                assert!((1..=STAGE4_MAX_GROUP_COUNT as usize).contains(&count));
+                assert!(begin + count <= logical_len);
+                positions += count;
+            }
+            assert_eq!(positions, logical_len);
+        });
+    }
+
+    #[test]
+    fn materialized_group_builder_matches_reference_at_boundaries() {
+        for &len in &[1usize, 2, 3, 7, 8, 9, 255, 256, 257, 511, 512, 513] {
+            let data = bytes(len, 0x9e37_79b9_7f4a_7c15 ^ len as u64);
+            assert_direct_builder_matches(&data, &singleton_chunk_flags(len));
+        }
+
+        // Exercise the rel=255 full sort + stable leading-byte insertion path.
+        let chunk = bytes(256, 0x1234_5678_9abc_def0);
+        let mut periodic = Vec::with_capacity(4 * 256 + 13);
+        for _ in 0..4 {
+            periodic.extend_from_slice(&chunk);
+        }
+        periodic.extend_from_slice(&chunk[..13]);
+        let mut one_group = vec![0; (periodic.len() >> 8) + 1];
+        one_group[0] = 1;
+        assert_direct_builder_matches(&periodic, &one_group);
+
+        // Force a multi-run equal-key bucket through the fixed-eight gather.
+        SCRATCH.with(|cell| cell.borrow_mut().group_positions.clear());
+        let collisions = vec![0u8; 33];
+        assert_direct_builder_matches(&collisions, &singleton_chunk_flags(collisions.len()));
+        SCRATCH.with(|cell| {
+            assert!(
+                cell.borrow().group_positions.len()
+                    >= collisions.len() + MATERIALIZED_SA_TAIL_WORDS
+            );
+        });
+
+        // Production's largest observed length: worst-case run count, plus a
+        // 255-nonzero tail that stresses both source and destination slack.
+        let max_data = bytes(70_911, 0xd1b5_4a32_d192_ed03);
+        assert_direct_builder_matches(&max_data, &singleton_chunk_flags(max_data.len()));
+
+        // The opposite production-max shape: no interior boundary, so all 276
+        // complete chunks exercise one large rel=255/stable-insertion group.
+        let mut max_group_data = Vec::with_capacity(70_911);
+        while max_group_data.len() < 70_911 {
+            max_group_data.extend_from_slice(&chunk);
+        }
+        max_group_data.truncate(70_911);
+        let mut max_group_flags = vec![0; (max_group_data.len() >> 8) + 1];
+        max_group_flags[0] = 1;
+        assert_direct_builder_matches(&max_group_data, &max_group_flags);
+
+        let data = bytes(9, 7);
+        let mut padded_data = data.clone();
+        padded_data.extend_from_slice(&[0; 3]);
+        let flags = singleton_chunk_flags(data.len());
+        let mut short = vec![0; data.len() + MATERIALIZED_SA_TAIL_WORDS - 1];
+        assert!(!sa_build_compact_fused(
+            &padded_data,
+            data.len(),
+            &flags,
+            &mut short,
+        ));
+        let mut just_enough = vec![0; data.len() + MATERIALIZED_SA_TAIL_WORDS];
+        assert!(sa_build_compact_fused(
+            &padded_data,
+            data.len(),
+            &flags,
+            &mut just_enough,
+        ));
+
+        let mut zero_out = vec![0; MATERIALIZED_SA_TAIL_WORDS];
+        assert!(!sa_build_compact_fused(&[0; 3], 0, &[1], &mut zero_out));
+    }
+
+    #[test]
+    fn fixed_eight_multi_run_gather_stays_inside_seven_word_tail() {
+        let mut arena = (0..24u32).map(|x| x * 7 + 3).collect::<Vec<_>>();
+        arena.extend_from_slice(&[0; MATERIALIZED_SA_TAIL_WORDS]);
+        let runs = [
+            make_stage5_run(0x010203, 0, 7, false),
+            make_stage5_run(0x010203, 7, 8, false),
+            make_stage5_run(0x010203, 15, 9, false),
+        ];
+        const GUARD: u32 = 0xa5a5_5a5a;
+        let total = 24usize;
+        let mut gathered = vec![GUARD; total + MATERIALIZED_SA_TAIL_WORDS + 1];
+        let mut out = 0usize;
+        for run in runs {
+            out += copy_materialized_run(
+                &mut gathered[..total + MATERIALIZED_SA_TAIL_WORDS],
+                out,
+                &arena,
+                run,
+            );
+        }
+        assert_eq!(out, total);
+        assert_eq!(&gathered[..total], &arena[..total]);
+        assert_eq!(gathered[total + MATERIALIZED_SA_TAIL_WORDS], GUARD);
+    }
 }

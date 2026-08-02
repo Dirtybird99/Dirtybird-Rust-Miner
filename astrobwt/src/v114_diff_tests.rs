@@ -78,9 +78,10 @@ fn run_both(input: &[u8], scratch: &mut AstroBwtScratch) -> Option<Both> {
         sais32::hash_v114_cpp_fused_into(&scratch.data, logical_len, flags, flag_len as u32);
 
     // Pure-Rust path (same inputs, direct call).
-    let mut rust_buf = vec![0i32; logical_len];
+    let mut rust_buf = vec![0i32; logical_len + crate::v114::MATERIALIZED_SA_TAIL_WORDS];
     let rust_ok =
         crate::v114::sa_build_compact_fused(&scratch.data, logical_len, flags, &mut rust_buf);
+    rust_buf.truncate(logical_len);
     let rust_sa = rust_ok.then_some(rust_buf);
     let rust_hash = crate::v114::hash_compact_fused(&scratch.data, logical_len, flags);
 
