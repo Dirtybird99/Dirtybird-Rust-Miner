@@ -260,3 +260,30 @@ jobs:
           readelf -hlW "$BIN"
           readelf -dW "$BIN"
           scripts/verify-arm64-elf.sh "$BIN" bionic
+
+  # Dry-run of the release workflow's macos-arm64 build: same toolchain pin,
+  # same cargo invocation, same host-arch assert, run natively on the Apple
+  # Silicon runner. Unlike the cross-compiled targets there is no ELF policy
+  # to assert (Mach-O, host-native) -- the build succeeding and the binary
+  # executing IS the whole contract, so prove both here before a tag exists.
+  macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.0
+
+      - name: Build macos-arm64 + smoke test
+        run: |
+          set -euo pipefail
+          # Keep byte-identical to release.yml's build-macos job: the arch
+          # assert exists because "macos-latest" has changed architecture
+          # before, and an amd64 binary under an arm64 artifact name must
+          # fail here, not on a user's machine.
+          test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
+          cargo build --locked --release -p dero-miner --features v114 --bin dero-miner
+          PKGVER="$(cargo metadata --locked --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "dero-miner") | .version')"
+          test "$(target/release/dero-miner --version)" = "dero-miner $PKGVER"

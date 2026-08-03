@@ -108,7 +108,16 @@ To also diff the Rust SA against the C++ it was ported from, see §3 of
 ## Usage
 
 Prebuilt binaries and their checksums are available from
-[GitHub Releases](https://github.com/Dirtybird99/Dirtybird-Rust-Miner/releases).
+[GitHub Releases](https://github.com/Dirtybird99/Dirtybird-Rust-Miner/releases):
+
+| Asset | Platform |
+|---|---|
+| `…-amd64-v*.tar.gz` | Linux x86_64 (static musl — any distro) |
+| `…-arm64-v*.tar.gz` | Linux aarch64 (static musl — SBCs, arm64 VMs; **not Android**) |
+| `…-android-arm64-v*.tar.gz` | Android aarch64 (Termux — see below) |
+| `…-macos-arm64-v*.tar.gz` | macOS Apple Silicon |
+| `…-win64-v*.zip` | Windows x86_64 |
+| `…hiveos_mmpos.amd64.tar.gz` | HiveOS / mmpOS farm package (see below) |
 
 ```sh
 dero-miner -w <dero-address> -d <daemon:port> -t <threads>
@@ -125,6 +134,42 @@ shrinks to fit narrow terminals, keeping as many fields as the width allows. Red
 (`dero-miner … 2> miner.log`) switches it to complete, newline-terminated records with no colour
 and no cursor control, so the log stays greppable. `NO_COLOR=1` turns colour off while keeping the
 in-place repaint.
+
+`--api-bind-address <ip:port>` serves a one-line plain-text stats endpoint over HTTP
+(`<hashrate_hs> <uptime_secs> <version> <accepted> <rejected>`) for farm managers and
+scripts; it is off unless the flag is given. The HiveOS/mmpOS package below wires it up
+automatically.
+
+## macOS (Apple Silicon)
+
+Download `Dirtybird-Rust-Miner-macos-arm64-v*.tar.gz`, extract, and run `./dero-miner`.
+The binary is not notarized, so the first run trips Gatekeeper ("cannot be opened because
+the developer cannot be verified"); clear the quarantine attribute once:
+
+```sh
+xattr -d com.apple.quarantine ./dero-miner
+```
+
+The ARMv8 hardware SHA-256 path is the same one the Android/arm64 builds use, so M-series
+chips get the hardware hash backend out of the box.
+
+## HiveOS / mmpOS
+
+The `dirtybird-rust-miner-v*.hiveos_mmpos.amd64.tar.gz` asset is a farm package: the Linux
+amd64 binary plus the agent hook scripts both platforms expect (`h-config.sh`, `h-run.sh`,
+`h-stats.sh` for HiveOS; `mmp-stats.sh` for mmpOS).
+
+**HiveOS:** create a Flight Sheet with miner "Custom", set the installation URL to the
+release asset URL, miner name `dirtybird-rust-miner`, wallet template `%WAL%`, and the
+pool/daemon getwork endpoint as the URL (e.g. `dero-node.mysrv.cloud:10100` — a scheme
+prefix is stripped automatically). Extra CLI flags can go in the "Extra config arguments"
+box; they are appended to the generated command line.
+
+**mmpOS:** add a custom miner profile pointing at the same asset URL; `mmp-stats.sh` is the
+stats hook.
+
+Both platforms read hashrate from the miner's stats endpoint on `127.0.0.1:44011`, which
+the package's launch script enables via `--api-bind-address`.
 
 ## Android (Termux)
 

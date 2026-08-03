@@ -26,6 +26,7 @@
 mod affinity;
 mod bench;
 mod job;
+mod stats_api;
 mod sustained;
 mod term;
 mod tls;
@@ -131,6 +132,10 @@ struct Cli {
     /// default on shani2 builds — measured byte-exact +2.5% at 20T / +4% at 24T.
     #[arg(long)]
     no_2way: bool,
+    /// Serve plain-text miner stats over HTTP on this address, e.g.
+    /// 127.0.0.1:44011 (for HiveOS/mmpOS farm agents). Off unless given.
+    #[arg(long)]
+    api_bind_address: Option<String>,
 }
 
 /// `dero1qyq...hnwk` — enough to recognise the address, short enough not to
@@ -340,13 +345,27 @@ fn main() {
             .expect("spawn worker");
     }
 
+    // Farm-manager stats endpoint (HiveOS/mmpOS poll it over localhost).
+    // `api` exists whether or not the listener does: stats_loop publishes its
+    // per-tick rate through it unconditionally, which is cheaper than making
+    // the publish conditional and keeps stats_loop ignorant of the flag.
+    let api = Arc::new(stats_api::ApiState::new());
+    if let Some(addr) = cli.api_bind_address.clone() {
+        let api = Arc::clone(&api);
+        let shared = Arc::clone(&shared);
+        std::thread::Builder::new()
+            .name("stats-api".into())
+            .spawn(move || stats_api::serve(&addr, api, shared))
+            .expect("spawn stats-api");
+    }
+
     // 1 Hz status repaint (Go: the prompt goroutine, miner.go:225-294)
     {
         let shared = Arc::clone(&shared);
         let testnet = cli.testnet;
         std::thread::Builder::new()
             .name("stats".into())
-            .spawn(move || stats_loop(&shared, testnet))
+            .spawn(move || stats_loop(&shared, &api, testnet))
             .expect("spawn stats");
     }
 
@@ -840,7 +859,7 @@ fn status_row_has_something_to_say(connected: bool, job_counter: u64) -> bool {
     connected && job_counter > 0
 }
 
-fn stats_loop(shared: &Shared, testnet: bool) {
+fn stats_loop(shared: &Shared, api: &stats_api::ApiState, testnet: bool) {
     let con = term::get();
     let started_at = Instant::now();
     let started_hashes = shared.counter.load(Ordering::Relaxed);
@@ -859,6 +878,7 @@ fn stats_loop(shared: &Shared, testnet: bool) {
         let counter = shared.counter.load(Ordering::Relaxed);
         let uptime = now.saturating_duration_since(started_at);
         let rate = rates.sample(now, counter);
+        api.publish_rate_khs(rate);
         let average = counter
             .checked_sub(started_hashes)
             .map_or(0.0, |hashes| rate_khs(hashes, uptime));
