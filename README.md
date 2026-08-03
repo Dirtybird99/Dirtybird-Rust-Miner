@@ -16,6 +16,15 @@ from the C++ that used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ON
 
 ## Highlights
 
+### v0.2.13
+
+v0.2.13 widens the release platforms to match the field: a native **macOS Apple Silicon**
+build (`macos-arm64`, the same ARMv8 hardware SHA-256 path the Android builds use) and a
+**HiveOS/mmpOS farm package** (`hiveos_mmpos.amd64`) wrapping the Linux amd64 binary with
+the agent hook scripts. Supporting both, the miner gains `--api-bind-address` — an opt-in
+localhost stats endpoint serving one plain-text line (hashrate, uptime, version,
+accepted, rejected) that the farm scripts poll. No hash-path changes.
+
 ### v0.2.12
 
 v0.2.12 replaces the materialized path's per-run general `memcpy` call with a fixed
