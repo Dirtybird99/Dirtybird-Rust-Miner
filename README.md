@@ -74,8 +74,10 @@ no C/C++ backend.
 **No C toolchain required on x86 — at all.** The descriptor suffix array AND its refusal fallback
 are pure Rust (`sais32`), so a plain stable `cargo build --release -p dero-miner --features
 v114` is the whole story — no `clang-cl`, no `cc`/C compiler, no libsais, no matched-LLVM
-nightly, no `.cargo/config.toml`. Use the plain `release` profile: fat LTO (`--profile
-release-lto`) is a ~6% *pessimization* for the Rust backend, see [BENCHMARKS.md](BENCHMARKS.md).
+nightly, no `.cargo/config.toml`. Plain `release` is the portable default. Fat LTO is
+target-dependent: the current Windows i7-13700HX build gains 1.46% with `--profile
+release-lto`, while older 24-thread/ARM tests lost performance; see
+[BUILDING-LTO.md](BUILDING-LTO.md).
 
 **arm64 needs a C compiler for the target (v0.2.8+).** Not for the hash code — that stays
 Rust — but because enabling `sha2`'s ARMv8 SHA-256 backend also pulls in `sha2-asm`, whose
@@ -92,6 +94,7 @@ See [BUILDING-LTO.md](BUILDING-LTO.md).
 
 ```sh
 cargo build --release -p dero-miner --features v114      # stable; ~parity with C
+cargo build --profile release-lto -p dero-miner --features v114  # measured 13700HX winner
 ```
 
 ## Testing

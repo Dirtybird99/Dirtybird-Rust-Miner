@@ -157,7 +157,27 @@ number. Single-thread `sa_bench` is a dead heat (1458 vs 1457 H/s), which is wha
 expect if the win comes from allocation/memory behaviour at saturation rather than from the
 scalar inner loops.
 
-### `release-lto` is a pessimization for the Rust backend — use `release`
+### 2026-08-09 retest: LTO now wins on the Windows i7-13700HX
+
+The materialized Rust backend changed substantially after the historical test below.
+A fresh A/B used saved binaries, 20 threads, smart affinity, HIGH priority, 2 MiB large
+pages, two-way SHA-NI, and six alternating 10-second pairs:
+
+| build | mean | paired median | pair wins | fixed-work mean |
+|---|---:|---:|---:|---:|
+| plain `release` | 25.243 KH/s | — | — | 430,639 ns/hash |
+| `release-lto` | **25.611 KH/s** | **+2.01%** | **5/6** | **422,398 ns/hash** |
+
+Fat LTO improved sustained throughput **1.46%** and deterministic fixed-work latency
+**1.91%**. Both builds produced checksum `4bd773cf950c05ae`. Two reversed-order
+30-second Zig/Rust pairs then averaged 25.37 KH/s Rust and 26.24 KH/s Zig: **96.69%
+parity**, with 3.31% remaining on this host.
+
+This does not erase the target dependence demonstrated below. Plain `release` remains
+the portable default; use `release-lto` on this workstation and anywhere an on-target A/B
+confirms it.
+
+### Historical: `release-lto` was a pessimization for the earlier Rust backend
 
 The same A/B on the `release-lto` profile (`lto = "fat"`, `codegen-units = 1`) reverses
 the result, and this one *is* significant:
@@ -180,9 +200,9 @@ unconditionally, while rustc defaults to the x86-64 baseline. Matching the ISA m
 *slightly worse*, so the gap is inlining/register-allocation under `codegen-units = 1`, not
 the instruction set. Hypothesis raised, tested, refuted.
 
-**Recommendation: build the pure-Rust `v114` backend with the plain `release` profile.**
-`release-lto` existed to LTO the Rust and the C++ *together*; with no C++ in the build there
-is nothing to link across, and fat LTO's remaining effect here is negative.
+**Historical recommendation:** this backend version favored plain `release`. Re-test the
+current backend on the deployment CPU; the dated result above shows that the direction can
+reverse after code-generation-sensitive changes.
 
 Single-language rustc PGO (`-Cprofile-generate` / `-Cprofile-use`) was tested after these
 historical runs and did not beat plain `release`, so it is not used for v0.2.11.

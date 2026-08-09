@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "shani2")]
+use dero_astrobwt::astrobwtv3_x2;
 use dero_astrobwt::{astrobwtv3_with_scratch, AstroBwtScratch};
 
 use crate::affinity;
@@ -49,7 +51,10 @@ fn resolve_pin_order(threads: usize, logical_cpus: usize) -> Vec<usize> {
             return (0..threads).map(|t| list[t % list.len()]).collect();
         }
     }
-    if std::env::var("PIN_SMART").map(|v| v != "0").unwrap_or(false) {
+    if std::env::var("PIN_SMART")
+        .map(|v| v != "0")
+        .unwrap_or(false)
+    {
         return affinity::recommended_order(threads);
     }
     let cpus = logical_cpus.max(1);
@@ -59,7 +64,7 @@ fn resolve_pin_order(threads: usize, logical_cpus: usize) -> Vec<usize> {
 use affinity::set_high_priority;
 
 /// One worker: grind for the lifetime of `stop`, returning hashes completed.
-fn worker_loop(stop: &AtomicBool, global: &AtomicU64, tid: u8) -> u64 {
+fn worker_loop(stop: &AtomicBool, global: &AtomicU64, tid: u8, two_way: bool) -> u64 {
     let mut work = [0u8; MINIBLOCK_SIZE];
     // A plausible version-1 miniblock body; only the nonce region is mutated.
     rand::Rng::fill(&mut rand::thread_rng(), &mut work[..]);
@@ -67,16 +72,47 @@ fn worker_loop(stop: &AtomicBool, global: &AtomicU64, tid: u8) -> u64 {
     work[MINIBLOCK_SIZE - 1] = tid;
 
     let mut scratch = AstroBwtScratch::new();
+    #[cfg(feature = "shani2")]
+    let mut scratch_b = two_way.then(AstroBwtScratch::new);
+    #[cfg(feature = "shani2")]
+    let mut work_b = work;
     let mut i: u32 = 0;
     let mut local: u64 = 0;
     // Flush to the shared counter in batches to avoid contention.
     const FLUSH: u64 = 64;
     loop {
-        for _ in 0..FLUSH {
-            i = i.wrapping_add(1);
-            work[MINIBLOCK_SIZE - 5..MINIBLOCK_SIZE - 1].copy_from_slice(&i.to_be_bytes());
-            std::hint::black_box(astrobwtv3_with_scratch(&work, &mut scratch));
-            local += 1;
+        #[cfg(feature = "shani2")]
+        if two_way {
+            for _ in 0..FLUSH / 2 {
+                i = i.wrapping_add(1);
+                work[MINIBLOCK_SIZE - 5..MINIBLOCK_SIZE - 1].copy_from_slice(&i.to_be_bytes());
+                i = i.wrapping_add(1);
+                work_b[MINIBLOCK_SIZE - 5..MINIBLOCK_SIZE - 1].copy_from_slice(&i.to_be_bytes());
+                std::hint::black_box(astrobwtv3_x2(
+                    &work,
+                    &work_b,
+                    &mut scratch,
+                    scratch_b.as_mut().unwrap(),
+                ));
+                local += 2;
+            }
+        } else {
+            for _ in 0..FLUSH {
+                i = i.wrapping_add(1);
+                work[MINIBLOCK_SIZE - 5..MINIBLOCK_SIZE - 1].copy_from_slice(&i.to_be_bytes());
+                std::hint::black_box(astrobwtv3_with_scratch(&work, &mut scratch));
+                local += 1;
+            }
+        }
+        #[cfg(not(feature = "shani2"))]
+        {
+            let _ = two_way;
+            for _ in 0..FLUSH {
+                i = i.wrapping_add(1);
+                work[MINIBLOCK_SIZE - 5..MINIBLOCK_SIZE - 1].copy_from_slice(&i.to_be_bytes());
+                std::hint::black_box(astrobwtv3_with_scratch(&work, &mut scratch));
+                local += 1;
+            }
         }
         global.fetch_add(FLUSH, Ordering::Relaxed);
         if stop.load(Ordering::Relaxed) {
@@ -102,12 +138,25 @@ pub fn run_sustained(threads: usize, secs: u64, pin: bool) {
     let lp = dero_astrobwt::enable_large_pages();
     // HIGH priority by default; `SUSTAINED_NOPRIO=1` leaves NORMAL so the
     // priority experiment has a control arm.
-    let high_prio = std::env::var("SUSTAINED_NOPRIO").map(|v| v == "0").unwrap_or(true);
+    let high_prio = std::env::var("SUSTAINED_NOPRIO")
+        .map(|v| v == "0")
+        .unwrap_or(true);
     if high_prio {
         set_high_priority();
     }
 
     let pin_order = resolve_pin_order(threads, cores);
+    #[cfg(feature = "shani2")]
+    let two_way = std::env::var("MINER_2WAY")
+        .map(|value| value != "0")
+        .unwrap_or_else(|_| crate::worker::two_way_default());
+    #[cfg(not(feature = "shani2"))]
+    let two_way = false;
+    let suffix_path = if two_way || std::env::var_os("DERO_MATERIALIZE").is_some() {
+        "materialized"
+    } else {
+        "fused"
+    };
     let interval: u64 = std::env::var("PIN_INTERVAL")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -118,10 +167,12 @@ pub fn run_sustained(threads: usize, secs: u64, pin: bool) {
     let global = Arc::new(AtomicU64::new(0));
 
     eprintln!(
-        "sustained: {threads} threads, {secs}s window, pin={}, prio={}, largepages={}, logical_cpus={cores}",
+        "sustained: {threads} threads, {secs}s window, pin={}, prio={}, largepages={}, pipeline={}, suffix={}, logical_cpus={cores}",
         if pin { "on" } else { "off" },
         if high_prio { "HIGH" } else { "NORMAL" },
-        if lp { "2MB" } else { "off(4KB)" }
+        if lp { "2MB" } else { "off(4KB)" },
+        if two_way { "2way" } else { "1way" },
+        suffix_path,
     );
     if pin {
         eprintln!("pin map        : thread->core {pin_order:?}");
@@ -137,7 +188,7 @@ pub fn run_sustained(threads: usize, secs: u64, pin: bool) {
             if pin {
                 affinity::pin_current_thread(core);
             }
-            worker_loop(&stop, &global, t as u8)
+            worker_loop(&stop, &global, t as u8, two_way)
         }));
     }
 
@@ -182,7 +233,10 @@ pub fn run_sustained(threads: usize, secs: u64, pin: bool) {
     println!("threads        : {threads}");
     println!("elapsed        : {elapsed:.2}s");
     println!("total hashes   : {total}");
-    println!("HASHRATE       : {rate:.1} H/s  ({:.2} KH/s)", rate / 1000.0);
+    println!(
+        "HASHRATE       : {rate:.1} H/s  ({:.2} KH/s)",
+        rate / 1000.0
+    );
     println!("per-thread H/s : {:.1}", rate / threads as f64);
     println!(
         "thread spread  : min={min} max={max} ({}% spread)",
