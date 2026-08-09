@@ -24,6 +24,11 @@ jobs:
       - name: Test v1.14 backend
         run: cargo test --locked -p dero-astrobwt --features v114
 
+      - name: Build release miner + self-test
+        run: |
+          cargo build --locked --release -p dero-miner --features v114 --bin dero-miner
+          test "$(target/release/dero-miner --selftest)" = "AstroBWTv3 self-test: PASS"
+
       - name: Install ShellCheck
         run: |
           sudo apt-get update
@@ -99,6 +104,7 @@ jobs:
           PKGVER="$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.name == "dero-miner") | .version')"
           test "$(qemu-aarch64-static "$BIN" --version)" = "dero-miner $PKGVER"
+          test "$(qemu-aarch64-static "$BIN" --selftest)" = "AstroBWTv3 self-test: PASS"
 
       - name: Prove the hardware SHA-256 path under QEMU
         env:
@@ -261,6 +267,24 @@ jobs:
           readelf -dW "$BIN"
           scripts/verify-arm64-elf.sh "$BIN" bionic
 
+  windows-amd64:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.0
+
+      - name: Build win64 + self-test
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p dero-miner --features v114 --bin dero-miner
+          $actual = & target/release/dero-miner.exe --selftest
+          if ($LASTEXITCODE -ne 0 -or $actual -ne "AstroBWTv3 self-test: PASS") {
+            throw "Unexpected self-test output: $actual"
+          }
+
   # Dry-run of the release workflow's macos-arm64 build: same toolchain pin,
   # same cargo invocation, same host-arch assert, run natively on the Apple
   # Silicon runner. Unlike the cross-compiled targets there is no ELF policy
@@ -287,3 +311,4 @@ jobs:
           PKGVER="$(cargo metadata --locked --no-deps --format-version 1 |
             jq -r '.packages[] | select(.name == "dero-miner") | .version')"
           test "$(target/release/dero-miner --version)" = "dero-miner $PKGVER"
+          test "$(target/release/dero-miner --selftest)" = "AstroBWTv3 self-test: PASS"
