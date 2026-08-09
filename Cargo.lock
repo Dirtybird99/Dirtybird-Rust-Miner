@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "dero-astrobwt"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "bytemuck",
  "cc",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "dero-bn256"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "hex",
  "num-bigint",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "dero-crypto"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "blake2",
  "chacha20",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "dero-miner"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "clap",
  "dero-astrobwt",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "dero-protocol"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "dero-bn256",
  "dero-crypto",

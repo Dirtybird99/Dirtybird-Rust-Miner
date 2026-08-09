@@ -16,6 +16,15 @@ from the C++ that used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ON
 
 ## Highlights
 
+### v0.2.14
+
+v0.2.14 speeds up the pure-Rust materialized `v114` suffix path by keeping offsets
+relative to the arena origin, building radix histograms during emission, and using
+fixed-width arena operations. `--sustained-bench` now exercises and reports the production
+two-way materialized SHA-NI pipeline. The deterministic 2,500-pair production-x2 checksum
+remains `4bd773cf950c05ae`; matched Windows i7-13700HX runs averaged 25.37 KH/s in Rust
+versus 26.24 KH/s in Zig (**96.69% parity**). Plain `release` remains the portable default.
+
 ### v0.2.13
 
 v0.2.13 widens the release platforms to match the field: a native **macOS Apple Silicon**
