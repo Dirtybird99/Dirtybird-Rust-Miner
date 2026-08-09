@@ -5,10 +5,11 @@ hash. It is now a **pure-Rust** implementation (`astrobwt/src/v114.rs`, with nar
 audited unsafe fixed-width loads/copies), ported from the C++ that used to be vendored
 under `astrobwt/vendor/v114`. All real builds use `--features v114`.
 
-**There is one build.** `cargo build --release -p dero-miner --features v114` — stable
-toolchain, no C++ compiler, no `.cargo/config.toml`, no PGO profile. That is the
-recommended production build and the fastest one measured
-(see [BENCHMARKS.md](BENCHMARKS.md)).
+The portable production build is `cargo build --release -p dero-miner --features v114`:
+stable toolchain, no C++ compiler, no `.cargo/config.toml`, and no PGO profile.
+Fat LTO remains target-dependent. On the Windows i7-13700HX test host, the current
+materialized/x2 backend is **1.46% faster on average** with `release-lto`; older 24-thread
+and ARM measurements favored plain `release` (see [BENCHMARKS.md](BENCHMARKS.md)).
 
 ---
 
@@ -18,6 +19,10 @@ recommended production build and the fastest one measured
 # from the repo root
 cargo build --release -p dero-miner --features v114
 # binary: target/release/dero-miner.exe
+
+# Measured winner on the Windows i7-13700HX; remeasure on other CPUs.
+cargo build --profile release-lto -p dero-miner --features v114
+# binary: target/release-lto/dero-miner.exe
 ```
 
 No `clang-cl` needed: nothing under `vendor/v114` is compiled unless you opt into the
@@ -35,12 +40,17 @@ target/release/dero-miner.exe --sustained -t 24 --secs 30    # honest scoreboard
 cargo test -p dero-astrobwt --features v114                  # incl. the golden fixture
 ```
 
-### Do NOT use `--profile release-lto` for the Rust backend
+### Measure `release-lto` on the target CPU
 
-Measured: fat LTO + `codegen-units = 1` makes the pure-Rust descriptor SA **~6% slower**
-than plain `release` (18.5 → 17.3 KH/s @24T; see BENCHMARKS.md). `release-lto` existed to
-LTO the Rust and the C++ *together* — with no C++ in the build there is nothing to link
-across, and its remaining effect here is negative.
+Historical 24-thread testing found fat LTO + `codegen-units = 1` about **6% slower**
+(18.5 → 17.3 KH/s). After the current origin-relative materialized builder, fused radix
+histograms, and fixed-width arena stores landed, a fresh reversed-order test on Windows
+i7-13700HX found the opposite: fixed-work mean latency improved **1.91%**, sustained
+20-thread throughput improved **1.46% average / 2.01% median**, and LTO won 5/6 pairs.
+The deterministic checksum remained `4bd773cf950c05ae`.
+
+That result is a measured CPU/build exception, not a global flag recommendation. Keep
+plain `release` as the portable default and use `release-lto` where an on-target A/B wins.
 
 Single-language rustc PGO (`-Cprofile-generate` / `-Cprofile-use`) was tested and did not
 beat plain `release`, so the release does not carry a profile.
@@ -57,8 +67,8 @@ It required a nightly `rustc` whose bundled LLVM major matched `clang-cl`, plus 
 **There is no longer a C++ boundary to inline across.** The descriptor SA is Rust. The
 recipe is preserved in git history (see `.cargo/config.toml.example` and the
 `DERO_CC_PGO` / `DERO_CC_LTO` handling in `astrobwt/build.rs`) and still applies if you
-build with `--features v114-cpp`, but it buys nothing for the production build — and fat
-LTO on its own actively *costs* ~6% (see §1).
+build with `--features v114-cpp`. For the pure-Rust backend, use the stable profiles above;
+fat LTO may win or lose depending on the target (see §1).
 
 ---
 

@@ -293,25 +293,14 @@ fn sort_stage4_suffix_order_small(view: &Stage4View, order: &mut [u32]) {
     }
 }
 
-/// The `rel > 0` tail shared by every emit variant (C++ l.1275-1281,
-/// l.1326-1340, l.1398-1412, l.1473-1487): step every position back one byte,
-/// then re-establish order with an insertion sort keyed on the NEW leading
-/// byte alone. Correct because the suffixes were already ordered by what
-/// follows that byte.
 #[inline]
-fn step_back_and_reorder(data: &[u8], order: &mut [u32]) {
-    debug_assert!(order
-        .iter()
-        .all(|&pos| pos > 0 && (pos as usize) < data.len()));
+fn reorder_by_leading_byte(data: &[u8], order: &mut [u32]) {
+    debug_assert!(order.iter().all(|&pos| (pos as usize) < data.len()));
     let order_ptr = order.as_mut_ptr();
     let data_ptr = data.as_ptr();
-    // SAFETY: the caller's positions are in `1..data.len()`. Every order
-    // access is below `order.len()` and every shifted position came from that
-    // already-validated set.
+    // SAFETY: every position was validated against `data`; all order accesses
+    // stay below `order.len()` and shifted entries came from that same slice.
     unsafe {
-        for i in 0..order.len() {
-            *order_ptr.add(i) -= 1;
-        }
         for i in 1..order.len() {
             let pos = *order_ptr.add(i);
             let key = *data_ptr.add(pos as usize);
@@ -331,6 +320,19 @@ fn step_back_and_reorder(data: &[u8], order: &mut [u32]) {
     }
 }
 
+/// The `rel > 0` tail shared by the streaming emit variants: step every live
+/// position back one byte, then restore order by the new leading byte.
+#[inline]
+fn step_back_and_reorder(data: &[u8], order: &mut [u32]) {
+    debug_assert!(order
+        .iter()
+        .all(|&pos| pos > 0 && (pos as usize) < data.len()));
+    for pos in order.iter_mut() {
+        *pos -= 1;
+    }
+    reorder_by_leading_byte(data, order);
+}
+
 // ===========================================================================
 // Stage5Run — v114_stubs.cpp:283-287, 859-885
 // ===========================================================================
@@ -348,6 +350,21 @@ struct Stage5Run {
 #[inline]
 fn stage5_radix_order_key(key: u32) -> u32 {
     ((key & 0x0000ff) << 16) | (key & 0x00ff00) | ((key & 0xff0000) >> 16)
+}
+
+#[inline(always)]
+fn count_radix_key(counts: &mut [[u32; 256]; 3], key: u32) {
+    counts[0][(key & 0xff) as usize] += 1;
+    counts[1][((key >> 8) & 0xff) as usize] += 1;
+    counts[2][((key >> 16) & 0xff) as usize] += 1;
+}
+
+struct RadixCounts([[u32; 256]; 3]);
+
+impl Default for RadixCounts {
+    fn default() -> Self {
+        Self([[0; 256]; 3])
+    }
 }
 
 /// C++ `make_stage5_run` (l.865).
@@ -422,30 +439,34 @@ fn radix_sort_runs_by_stored_key_prefix(
     tmp: &mut Vec<Stage5Run>,
     n: usize,
 ) {
+    let mut counts = [[0u32; 256]; 3];
+    for run in &runs[..n] {
+        count_radix_key(&mut counts, run.key);
+    }
+    radix_sort_runs_by_stored_key_prefix_counted(runs, tmp, n, &mut counts);
+}
+
+fn radix_sort_runs_by_stored_key_prefix_counted(
+    runs: &mut Vec<Stage5Run>,
+    tmp: &mut Vec<Stage5Run>,
+    n: usize,
+    counts: &mut [[u32; 256]; 3],
+) {
     if n <= 1 {
         return;
     }
     debug_assert!(runs.len() >= n);
     debug_assert!(tmp.len() >= n);
 
-    let mut counts0 = [0u32; 256];
-    let mut counts1 = [0u32; 256];
-    let mut counts2 = [0u32; 256];
-    for run in &runs[..n] {
-        counts0[(run.key & 0xff) as usize] += 1;
-        counts1[((run.key >> 8) & 0xff) as usize] += 1;
-        counts2[((run.key >> 16) & 0xff) as usize] += 1;
-    }
-
     // Pass 0: runs → tmp
     let mut sum = 0u32;
-    for c in counts0.iter_mut() {
+    for c in counts[0].iter_mut() {
         let n = *c;
         *c = sum;
         sum += n;
     }
     for run in &runs[..n] {
-        let slot = &mut counts0[(run.key & 0xff) as usize];
+        let slot = &mut counts[0][(run.key & 0xff) as usize];
         let dst = *slot as usize;
         debug_assert!(dst < n);
         // SAFETY: prefix sums assign every input run one slot in `0..n`.
@@ -455,13 +476,13 @@ fn radix_sort_runs_by_stored_key_prefix(
 
     // Pass 1: tmp → runs
     let mut sum = 0u32;
-    for c in counts1.iter_mut() {
+    for c in counts[1].iter_mut() {
         let n = *c;
         *c = sum;
         sum += n;
     }
     for run in &tmp[..n] {
-        let slot = &mut counts1[((run.key >> 8) & 0xff) as usize];
+        let slot = &mut counts[1][((run.key >> 8) & 0xff) as usize];
         let dst = *slot as usize;
         debug_assert!(dst < n);
         // SAFETY: prefix sums assign every input run one slot in `0..n`.
@@ -471,13 +492,13 @@ fn radix_sort_runs_by_stored_key_prefix(
 
     // Pass 2: runs → tmp, then swap back (C++ `runs->swap(*tmp)`, l.1021).
     let mut sum = 0u32;
-    for c in counts2.iter_mut() {
+    for c in counts[2].iter_mut() {
         let n = *c;
         *c = sum;
         sum += n;
     }
     for run in &runs[..n] {
-        let slot = &mut counts2[((run.key >> 16) & 0xff) as usize];
+        let slot = &mut counts[2][((run.key >> 16) & 0xff) as usize];
         let dst = *slot as usize;
         debug_assert!(dst < n);
         // SAFETY: prefix sums assign every input run one slot in `0..n`.
@@ -641,6 +662,7 @@ struct FusedScratch {
     next_run_lengths: Vec<u32>,
     runs: Vec<Stage5Run>,
     radix_tmp: Vec<Stage5Run>,
+    materialized_radix_counts: RadixCounts,
     materialized_arena_len: usize,
     materialized_runs_len: usize,
 }
@@ -1128,39 +1150,53 @@ struct MaterializedBuilder<'scratch, 'data> {
     logical_len: u32,
     arena: &'scratch mut [u32],
     runs: &'scratch mut [Stage5Run],
+    radix_counts: &'scratch mut [[u32; 256]; 3],
     arena_len: usize,
     runs_len: usize,
 }
 
 impl MaterializedBuilder<'_, '_> {
-    /// Record one already suffix-sorted, same-prefix run.
+    /// Record one already suffix-sorted, same-prefix run. `origins` contains
+    /// chunk origins; `rel` reconstructs the live suffix positions.
     #[inline(always)]
-    fn append_run(&mut self, positions: &[u32]) {
-        let count = positions.len();
+    fn append_run(&mut self, origins: &[u32], first: usize, count: usize, rel: u32) {
         debug_assert!((1..=STAGE4_MAX_GROUP_COUNT as usize).contains(&count));
+        debug_assert!(first + count <= origins.len());
         let begin = self.arena_len;
         let end = begin + count;
-        debug_assert!(end <= self.arena.len());
+        let stored = count.next_multiple_of(MATERIALIZED_SA_COPY_WORDS);
+        debug_assert!(begin + stored <= self.arena.len());
+        debug_assert!(first + stored <= origins.len());
         debug_assert!(self.runs_len < self.runs.len());
+        debug_assert!(origins[first..first + count]
+            .iter()
+            .all(|&origin| origin + rel < self.logical_len));
 
-        // SAFETY: the builder owns disjoint scratch fields; the capacity and
-        // non-empty run invariants are checked when the builder is created.
+        // SAFETY: both scratch buffers include seven initialized tail words.
+        // Each fixed block is inside those padded buffers; only `count` words
+        // become logical, so the next run overwrites any extra lanes.
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                positions.as_ptr(),
-                self.arena.as_mut_ptr().add(begin),
-                count,
-            );
-            let first = *positions.get_unchecked(0);
+            let dst = self.arena.as_mut_ptr().add(begin);
+            let src = origins.as_ptr().add(first);
+            let mut copied = 0;
+            while copied < count {
+                let block = std::ptr::read_unaligned(
+                    src.add(copied).cast::<[u32; MATERIALIZED_SA_COPY_WORDS]>(),
+                );
+                let block = block.map(|origin| origin + rel);
+                std::ptr::write_unaligned(
+                    dst.add(copied).cast::<[u32; MATERIALIZED_SA_COPY_WORDS]>(),
+                    block,
+                );
+                copied += MATERIALIZED_SA_COPY_WORDS;
+            }
+            let first_pos = *origins.get_unchecked(first) + rel;
+            let key = stage5_radix_order_key(load24_unchecked(self.data, first_pos));
+            count_radix_key(self.radix_counts, key);
             self.runs
                 .as_mut_ptr()
                 .add(self.runs_len)
-                .write(make_stage5_run(
-                    stage5_radix_order_key(load24_unchecked(self.data, first)),
-                    begin as u32,
-                    count as u32,
-                    false,
-                ));
+                .write(make_stage5_run(key, begin as u32, count as u32, false));
         }
         self.arena_len = end;
         self.runs_len += 1;
@@ -1182,13 +1218,15 @@ impl MaterializedBuilder<'_, '_> {
             let runs = self.runs.as_mut_ptr().add(self.runs_len);
             for rel in 0..count {
                 let pos = start + rel as u32;
+                let key = stage5_radix_order_key(load24_unchecked(self.data, pos));
                 arena.add(rel).write(pos);
                 runs.add(rel).write(make_stage5_run(
-                    stage5_radix_order_key(load24_unchecked(self.data, pos)),
+                    key,
                     (self.arena_len + rel) as u32,
                     1,
                     false,
                 ));
+                count_radix_key(self.radix_counts, key);
             }
         }
         self.arena_len += count;
@@ -1213,30 +1251,35 @@ impl MaterializedBuilder<'_, '_> {
 
         let n = group_count as usize;
         debug_assert!(order.len() >= n);
-        let order = &mut order[..n];
-        for (chunk, pos) in order.iter_mut().enumerate() {
+        for (chunk, pos) in order[..n].iter_mut().enumerate() {
             *pos = base + ((chunk as u32) << 8) + 255;
         }
         let suffix_view = Stage5View {
             logical_len: self.logical_len,
             data: self.data,
         };
-        order.sort_by(|&a, &b| compare_suffixes_full_8(&suffix_view, a, b));
+        order[..n].sort_by(|&a, &b| compare_suffixes_full_8(&suffix_view, a, b));
+        // Keep chunk origins from here on. The live position is `origin + rel`,
+        // avoiding an order-wide decrement on every one of the 255 steps.
+        for pos in &mut order[..n] {
+            *pos -= 255;
+        }
 
         for rel in (0..=255u32).rev() {
+            let rel_data = &self.data[rel as usize..];
             let mut group_start = 0usize;
             while group_start < n {
-                let key = load24_unchecked(self.data, order[group_start]);
+                let key = load24_unchecked(rel_data, order[group_start]);
                 let mut group_end = group_start + 1;
-                while group_end < n && load24_unchecked(self.data, order[group_end]) == key {
+                while group_end < n && load24_unchecked(rel_data, order[group_end]) == key {
                     group_end += 1;
                 }
-                self.append_run(&order[group_start..group_end]);
+                self.append_run(order, group_start, group_end - group_start, rel);
                 group_start = group_end;
             }
 
             if rel > 0 {
-                step_back_and_reorder(self.data, order);
+                reorder_by_leading_byte(&self.data[(rel - 1) as usize..], &mut order[..n]);
             }
         }
     }
@@ -1269,8 +1312,9 @@ fn build_materialized_group_runs(
     // Zig uses fixed per-thread arrays. A grow-only initialized Vec has the
     // same steady-state behavior while retaining this port's larger accepted
     // descriptor bound and safe indexing.
-    if scratch.order.len() < STAGE4_MAX_GROUP_COUNT as usize {
-        scratch.order.resize(STAGE4_MAX_GROUP_COUNT as usize, 0);
+    let padded_order_len = STAGE4_MAX_GROUP_COUNT as usize + MATERIALIZED_SA_TAIL_WORDS;
+    if scratch.order.len() < padded_order_len {
+        scratch.order.resize(padded_order_len, 0);
     }
     if scratch.arena_positions.len() < padded_len {
         scratch.arena_positions.resize(padded_len, 0);
@@ -1288,6 +1332,7 @@ fn build_materialized_group_runs(
     }
     scratch.materialized_arena_len = 0;
     scratch.materialized_runs_len = 0;
+    scratch.materialized_radix_counts.0 = [[0; 256]; 3];
 
     let data = &data[..data_len];
     let full_groups = logical_len >> 8;
@@ -1296,13 +1341,15 @@ fn build_materialized_group_runs(
             order,
             arena_positions,
             runs,
+            materialized_radix_counts,
             ..
         } = scratch;
         let mut builder = MaterializedBuilder {
             data,
             logical_len,
-            arena: &mut arena_positions[..logical_len_usize],
+            arena: &mut arena_positions[..padded_len],
             runs: &mut runs[..logical_len_usize],
+            radix_counts: &mut materialized_radix_counts.0,
             arena_len: 0,
             runs_len: 0,
         };
@@ -1396,7 +1443,12 @@ fn materialize_group_runs_to_sa(
         return false;
     }
 
-    radix_sort_runs_by_stored_key_prefix(&mut scratch.runs, &mut scratch.radix_tmp, runs_len);
+    radix_sort_runs_by_stored_key_prefix_counted(
+        &mut scratch.runs,
+        &mut scratch.radix_tmp,
+        runs_len,
+        &mut scratch.materialized_radix_counts.0,
+    );
 
     let out: &mut [u32] = &mut bytemuck::cast_slice_mut(out)[..padded_len];
     let FusedScratch {

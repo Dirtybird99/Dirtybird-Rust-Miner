@@ -148,7 +148,7 @@ fn pin_worker(tid: u8) {
 /// a doubled working set costs nothing; a phone has far less, and could reach a
 /// different verdict. `MINER_2WAY=0` (or `--no-2way`) turns it off.
 #[cfg(feature = "shani2")]
-fn two_way_default() -> bool {
+pub(crate) fn two_way_default() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         std::is_x86_feature_detected!("sha")
