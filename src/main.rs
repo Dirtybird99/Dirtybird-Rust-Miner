@@ -48,6 +48,10 @@ use worker::Shared;
 /// Go: config.MAJOR_HF2_HEIGHT — mainnet 481600, testnet 4 (config/config.go:108,129).
 const MAJOR_HF2_HEIGHT_MAINNET: u64 = 481_600;
 const MAJOR_HF2_HEIGHT_TESTNET: u64 = 4;
+const ASTROBWT_KAT_A: [u8; 32] = [
+    0x54, 0xe2, 0x32, 0x4d, 0xda, 0xcc, 0x3f, 0x03, 0x83, 0x50, 0x1a, 0x9e, 0x57, 0x60, 0xf8, 0x5d,
+    0x63, 0xe9, 0xbc, 0x67, 0x05, 0xe9, 0x12, 0x4c, 0xa7, 0xae, 0xf8, 0x90, 0x16, 0xab, 0x81, 0xea,
+];
 
 // Modern Termux cannot exec() binaries from app data directly (Android 10+
 // W^X), so it routes them through bionic's linker64 — even a static-PIE musl
@@ -96,6 +100,9 @@ struct Cli {
     /// Run benchmark mode (offline AstroBWTv3 throughput table).
     #[arg(long)]
     bench: bool,
+    /// Verify the packaged AstroBWTv3 mining path against a known answer.
+    #[arg(long)]
+    selftest: bool,
     /// Run the SUSTAINED throughput benchmark (counter-summed over a fixed
     /// window — the honest, hybrid-CPU-fair scoreboard). Uses `-t` threads.
     #[arg(long)]
@@ -153,6 +160,20 @@ fn elide_wallet(addr: &str) -> String {
     format!("{}...{}", &addr[..HEAD], &addr[addr.len() - TAIL..])
 }
 
+fn run_selftest() {
+    let mut scratch = dero_astrobwt::AstroBwtScratch::new();
+    let got = dero_astrobwt::astrobwtv3_with_scratch(b"a", &mut scratch);
+    if got != ASTROBWT_KAT_A {
+        eprintln!(
+            "AstroBWTv3 self-test: FAIL\nexpected: {}\nactual:   {}",
+            hex::encode(ASTROBWT_KAT_A),
+            hex::encode(got)
+        );
+        std::process::exit(1);
+    }
+    println!("AstroBWTv3 self-test: PASS");
+}
+
 fn main() {
     // Before anything prints, including the argument diagnostics below: this
     // resolves whether stderr is a terminal and turns on ANSI processing, which
@@ -204,6 +225,11 @@ fn main() {
         if materialize {
             std::env::set_var("DERO_MATERIALIZE", "1");
         }
+    }
+
+    if cli.selftest {
+        run_selftest();
+        return;
     }
 
     // Go runs bench before the panic checks (miner.go:181-219).

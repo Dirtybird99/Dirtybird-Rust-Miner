@@ -16,6 +16,13 @@ from the C++ that used to be vendored under `astrobwt/vendor/v114/`. ONE CPU, ON
 
 ## Highlights
 
+### v0.2.15
+
+v0.2.15 adds `--selftest`, an offline known-answer check that runs the packaged
+AstroBWTv3 mining path against the independent `pow("a")` result. CI and the release
+workflow execute it natively on Linux x64, Windows x64, and macOS ARM64, and under
+QEMU for Linux ARM64 before publishing. No hash-path or performance changes.
+
 ### v0.2.14
 
 v0.2.14 speeds up the pure-Rust materialized `v114` suffix path by keeping offsets
@@ -143,6 +150,7 @@ Prebuilt binaries and their checksums are available from
 ```sh
 dero-miner -w <dero-address> -d <daemon:port> -t <threads>
 # offline diagnostics:
+dero-miner --selftest                  # packaged AstroBWTv3 known-answer check
 dero-miner --bench                      # AstroBWTv3 throughput table
 dero-miner --sustained -t 24 --secs 30  # honest fixed-window hashrate
 ```

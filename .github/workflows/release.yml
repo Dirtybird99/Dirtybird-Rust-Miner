@@ -248,6 +248,7 @@ jobs:
             -C "$RUNNER_TEMP/rust-miner-smoke"
           BIN="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-amd64-$VER/dero-miner"
           test "$("$BIN" --version)" = "dero-miner ${VER#v}"
+          test "$("$BIN" --selftest)" = "AstroBWTv3 self-test: PASS"
 
           # ---- arm64 (musl, generic Linux): static-PIE policy + execution ----
           # The readelf asserts pin the static-PIE contract, the SHA-256
@@ -258,6 +259,7 @@ jobs:
           ARM="$RUNNER_TEMP/rust-miner-smoke/Dirtybird-Rust-Miner-arm64-$VER/dero-miner"
           ../scripts/verify-arm64-elf.sh "$ARM"
           test "$(qemu-aarch64-static "$ARM" --version)" = "dero-miner ${VER#v}"
+          test "$(qemu-aarch64-static "$ARM" --selftest)" = "AstroBWTv3 self-test: PASS"
 
           # ---- android-arm64 (bionic, the Termux artifact): ELF policy ----
           # There is NO execution gate here and there cannot be one:
@@ -280,6 +282,7 @@ jobs:
             test -f "$HIVE/$f"
           done
           test "$("$HIVE/dero-miner" --version)" = "dero-miner ${VER#v}"
+          test "$("$HIVE/dero-miner" --selftest)" = "AstroBWTv3 self-test: PASS"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -314,6 +317,10 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $actual -ne "dero-miner $($ver.Substring(1))") {
             throw "Unexpected version output: $actual"
           }
+          $actual = & $exe --selftest
+          if ($LASTEXITCODE -ne 0 -or $actual -ne "AstroBWTv3 self-test: PASS") {
+            throw "Unexpected self-test output: $actual"
+          }
 
   build-macos:
     name: Build macos-arm64
@@ -345,6 +352,7 @@ jobs:
           NAME="Dirtybird-Rust-Miner"
           VER_NUM="${VER#v}"
           test "$(target/release/dero-miner --version)" = "dero-miner $VER_NUM"
+          test "$(target/release/dero-miner --selftest)" = "AstroBWTv3 self-test: PASS"
 
           DIST="dist"
           rm -rf "$DIST"; mkdir -p "$DIST"
@@ -357,6 +365,10 @@ jobs:
           # records.
           tar -C "$DIST" -czf "$DIST/$stem.tar.gz" "$stem"
           rm -rf "$d"
+          mkdir "$RUNNER_TEMP/rust-miner-smoke"
+          tar -xzf "$DIST/$stem.tar.gz" -C "$RUNNER_TEMP/rust-miner-smoke"
+          test "$("$RUNNER_TEMP/rust-miner-smoke/$stem/dero-miner" --selftest)" = \
+            "AstroBWTv3 self-test: PASS"
           ( cd "$DIST" && shasum -a 256 "$stem.tar.gz" > SHA256SUMS.macos.txt )
           ls -1 "$DIST"
 
