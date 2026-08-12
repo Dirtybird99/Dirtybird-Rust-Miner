@@ -1,0 +1,65 @@
+name: Benchmarks
+
+# Parity with the C and Zig miners. Hosted runners are shared and thermally
+# throttled, so nothing here is a headline number -- it is a throughput smoke
+# test that catches an accidental order-of-magnitude regression. The real
+# measurements live in BENCHMARKS.md and the arm64-bench workflow.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-benchmark:
+    name: Synthetic Benchmark (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest }
+          - { name: Windows, os: windows-latest }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+
+      # --features v114 on purpose: that is the backend the release binaries are
+      # built with, so this measures the code that ships rather than the default
+      # pure-Rust sais32 fallback. Single-threaded by design -- it isolates
+      # per-hash cost from the miner crate's threading.
+      - name: Run the single-thread throughput example
+        shell: bash
+        run: |
+          cargo run --locked -q -p dero-astrobwt --example throughput \
+            --release --features v114 -- 8 2>&1 | tee "bench-${{ matrix.name }}.txt"
+          # The example prints one summary line; fail loudly if it ever stops.
+          grep -qE 'single-thread: .* H/s' "bench-${{ matrix.name }}.txt"
+
+      - name: Job summary
+        shell: bash
+        run: |
+          {
+            echo "### Synthetic benchmark (${{ matrix.name }})"
+            echo '```'
+            grep -E 'H/s' "bench-${{ matrix.name }}.txt" || cat "bench-${{ matrix.name }}.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: benchmark-${{ matrix.name }}
+          path: bench-${{ matrix.name }}.txt
