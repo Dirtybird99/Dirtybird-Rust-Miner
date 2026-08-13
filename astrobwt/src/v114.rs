@@ -271,6 +271,27 @@ fn compare_suffixes_after_key(view: &Stage5View, a: u32, b: u32) -> Ordering {
 /// C++ `suffix_less_after_key` (l.1033): strict weak order for equal-key
 /// merging, position as final tiebreak.
 #[inline]
+/// C++ `suffix_prefix_after_key` (l.821): the eight bytes after the 3-byte key
+/// as one big-endian word, zero-padded past `logical_len`. Zero padding is
+/// order-consistent with shorter-suffix-first: equal prefixes fall through to
+/// the full comparator, which applies the length tiebreak.
+fn suffix_prefix_after_key(view: &Stage5View, pos: u32) -> u64 {
+    let begin = pos as usize + 3;
+    let logical_len = view.logical_len as usize;
+    if begin + 8 <= logical_len {
+        return load_be64(view.data, begin);
+    }
+    let mut value = 0u64;
+    let mut shift = 56u32;
+    let mut i = begin;
+    while i < logical_len {
+        value |= u64::from(view.data[i]) << shift;
+        shift = shift.wrapping_sub(8);
+        i += 1;
+    }
+    value
+}
+
 fn suffix_less_after_key(view: &Stage5View, a: u32, b: u32) -> bool {
     match compare_suffixes_after_key(view, a, b) {
         Ordering::Less => true,
@@ -995,15 +1016,28 @@ fn try_two_equal_key_runs<F: FnMut(u32)>(
     let mut left_rel = 0u32;
     let mut right_rel = 0u32;
 
+    // Cache each cursor's eight-byte prefix and reload only the advanced
+    // side; the byte-walk comparator runs only when the prefixes tie.
+    let mut lpos = fused_run_pos(arena_positions, left, 0);
+    let mut rpos = fused_run_pos(arena_positions, right, 0);
+    let mut lprefix = suffix_prefix_after_key(view, lpos);
+    let mut rprefix = suffix_prefix_after_key(view, rpos);
+
     while left_rel < left_count && right_rel < right_count {
-        let lpos = fused_run_pos(arena_positions, left, left_rel);
-        let rpos = fused_run_pos(arena_positions, right, right_rel);
-        if suffix_less_after_key(view, lpos, rpos) {
+        if lprefix < rprefix || (lprefix == rprefix && suffix_less_after_key(view, lpos, rpos)) {
             sink(lpos);
             left_rel += 1;
+            if left_rel < left_count {
+                lpos = fused_run_pos(arena_positions, left, left_rel);
+                lprefix = suffix_prefix_after_key(view, lpos);
+            }
         } else {
             sink(rpos);
             right_rel += 1;
+            if right_rel < right_count {
+                rpos = fused_run_pos(arena_positions, right, right_rel);
+                rprefix = suffix_prefix_after_key(view, rpos);
+            }
         }
     }
     while left_rel < left_count {
@@ -1265,20 +1299,47 @@ impl MaterializedBuilder<'_, '_> {
             *pos -= 255;
         }
 
-        for rel in (0..=255u32).rev() {
-            let rel_data = &self.data[rel as usize..];
-            let mut group_start = 0usize;
-            while group_start < n {
-                let key = load24_unchecked(rel_data, order[group_start]);
-                let mut group_end = group_start + 1;
-                while group_end < n && load24_unchecked(rel_data, order[group_end]) == key {
-                    group_end += 1;
+        // Most 256-byte columns are shared by every group in the run. Build
+        // the equality mask once (C++ PR #25): a fully-equal column triplet
+        // emits the whole group as one run with no scan, and a fully-equal
+        // next column skips the stable reorder (reordering equal keys is the
+        // identity permutation).
+        let base_usize = base as usize;
+        let mut equal_columns = [u32::MAX; 8];
+        for rel in 0..256usize {
+            let first = self.data[base_usize + rel];
+            for group in 1..group_count as usize {
+                if self.data[base_usize + (group << 8) + rel] != first {
+                    equal_columns[rel >> 5] &= !(1u32 << (rel & 31));
+                    break;
                 }
-                self.append_run(order, group_start, group_end - group_start, rel);
-                group_start = group_end;
+            }
+        }
+        let column_is_equal =
+            |rel: u32| equal_columns[(rel >> 5) as usize] >> (rel & 31) & 1 != 0;
+
+        for rel in (0..=255u32).rev() {
+            if rel <= 253
+                && column_is_equal(rel)
+                && column_is_equal(rel + 1)
+                && column_is_equal(rel + 2)
+            {
+                self.append_run(order, 0, n, rel);
+            } else {
+                let rel_data = &self.data[rel as usize..];
+                let mut group_start = 0usize;
+                while group_start < n {
+                    let key = load24_unchecked(rel_data, order[group_start]);
+                    let mut group_end = group_start + 1;
+                    while group_end < n && load24_unchecked(rel_data, order[group_end]) == key {
+                        group_end += 1;
+                    }
+                    self.append_run(order, group_start, group_end - group_start, rel);
+                    group_start = group_end;
+                }
             }
 
-            if rel > 0 {
+            if rel > 0 && !column_is_equal(rel - 1) {
                 reorder_by_leading_byte(&self.data[(rel - 1) as usize..], &mut order[..n]);
             }
         }
@@ -1455,15 +1516,33 @@ fn materialize_group_runs_to_sa(
         runs,
         arena_positions,
         group_positions,
+        merge_positions,
+        run_lengths,
+        next_run_lengths,
         ..
     } = scratch;
     let runs = &runs[..runs_len];
     let arena_positions = &arena_positions[..padded_len];
-    let group_positions = &mut group_positions[..padded_len];
 
     let mut run_start = 0usize;
     let mut out_pos = 0usize;
     while run_start < runs.len() {
+        // Four adjacent unique-key runs copy straight out under one check —
+        // no per-run group scan (keys are radix-sorted, so adjacent-distinct
+        // means all-distinct).
+        if run_start + 4 <= runs.len()
+            && runs[run_start].key != runs[run_start + 1].key
+            && runs[run_start + 1].key != runs[run_start + 2].key
+            && runs[run_start + 2].key != runs[run_start + 3].key
+            && (run_start + 4 == runs.len() || runs[run_start + 3].key != runs[run_start + 4].key)
+        {
+            for &run in &runs[run_start..run_start + 4] {
+                out_pos += copy_materialized_run(out, out_pos, arena_positions, run);
+            }
+            run_start += 4;
+            continue;
+        }
+
         let mut run_end = run_start + 1;
         while run_end < runs.len() && runs[run_start].key == runs[run_end].key {
             run_end += 1;
@@ -1472,12 +1551,28 @@ fn materialize_group_runs_to_sa(
         if run_end == run_start + 1 {
             let copied = copy_materialized_run(out, out_pos, arena_positions, runs[run_start]);
             out_pos += copied;
+        } else if try_two_equal_key_runs(view, arena_positions, runs, run_start, run_end, |pos| {
+            out[out_pos] = pos;
+            out_pos += 1;
+        }) {
+            // exactly-two runs: straight merge of the per-run sorted segments
         } else {
+            // Each materialized run is already in suffix-after-key order, so
+            // the equal-key bucket is a merge of sorted segments, not a fresh
+            // sort of the gathered positions.
+            run_lengths.clear();
             let mut gathered = 0usize;
             for &run in &runs[run_start..run_end] {
+                run_lengths.push(stage5_run_count(run));
                 gathered += copy_materialized_run(group_positions, gathered, arena_positions, run);
             }
-            group_positions[..gathered].sort_by(|&a, &b| compare_suffixes_full_8(view, a, b));
+            merge_equal_key_runs_after_key(
+                view,
+                group_positions,
+                merge_positions,
+                run_lengths,
+                next_run_lengths,
+            );
             out[out_pos..out_pos + gathered].copy_from_slice(&group_positions[..gathered]);
             out_pos += gathered;
         }

@@ -1,5 +1,46 @@
 # Benchmarks
 
+## Stage-5 PR-25-class techniques (2026-08-12, branch `kata1-pr25-port`)
+
+Four techniques ported from the C miner's post-PR-#24/#25 `v114_stubs.cpp` into the
+materialized x2 path, landed together and measured as a stack:
+
+1. Equal-key buckets **merge** their per-run sorted segments (the existing two-run
+   linear merge and bottom-up k-way merge) instead of re-sorting the gathered
+   positions from scratch.
+2. The two-run merge caches each cursor's **eight-byte big-endian prefix** and
+   reloads only the advanced side; the byte-walk comparator runs only on prefix ties.
+3. Four adjacent **unique-key runs** copy straight out of the arena under one check.
+4. The emitter builds a per-group-run **256-bit column-equality mask** (scalar):
+   a fully-equal column triplet (`rel <= 253`) emits the whole group as one run with
+   no scan, and a fully-equal next column skips the stable reorder.
+
+Alternating paired runs on the deterministic 2,500-pair production-x2 corpus; every
+arm produced checksum `4bd773cf950c05ae`; lower is better. Five B-C rounds:
+
+| arm | mean µs/hash (5 rounds) | p95 µs/hash |
+|---|---:|---:|
+| v0.2.16 HEAD | 440.1–460.7 | 473.0–496.5 |
+| **stack** | **390.6–404.7** | **415.5–433.3** |
+| **paired change** | **−11.3% mean (range −8.5%…−12.6%, 5/5 rounds)** | **≈ −12%** |
+
+120-second sustained B-C-C-B at 20 threads (`--sustained --secs 120 -t 20 --pin`),
+v0.2.16 release binary vs the branch build:
+
+| build | KH/s |
+|---|---:|
+| v0.2.16 release | 22.95 / 22.36 |
+| **stack** | **25.73 / 25.57** |
+| **change** | **+13.2%** |
+
+`release-lto` on the same stack measured −0.78% µs/hash (3/3 rounds, at the
+attribution floor) — consistent with the standing "plain stable `release`
+recommended" verdict; rustc PGO was not re-attempted (previously measured as not
+beating plain release). Gates: `cargo test --locked -p dero-astrobwt --features
+v114` (including `fused_v114_matches_reference_fuzz`, 0/20,000 divergences) and the
+release `"v114 shani2"` suites pass on every step; these are regression gates from
+one Windows x86-64 host (i7-13700HX), not universal hardware claims.
+
 ## v0.2.12 fixed short-run copy (2026-08-02)
 
 The materialized descriptor path emits runs averaging only a few positions. On the measured
